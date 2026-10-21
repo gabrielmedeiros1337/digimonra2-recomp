@@ -1,0 +1,33 @@
+# Build directories and artifacts
+build/
+build_test/
+/*.exe
+*.obj
+*.pdb
+*.ilk
+*.idb
+
+# Game dumps, ROMs and extracted disc assets (copyright / >100MB file limit)
+*.ciso
+*.iso
+*.gcm
+*.dol
+extracted/
+
+# Debug frame captures and test logs
+*.bmp
+*.log
+run_*.txt
+test_*.txt
+
+# Visual Studio & IDE files
+.vs/
+*.user
+x64/
+Release/
+Debug/
+
+# Compressed archives
+*.zip
+*.7z
+*.rar
