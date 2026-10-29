@@ -191,6 +191,56 @@ static SDL_Renderer* s_main_renderer = NULL;
 static u32 s_current_frame_num = 0;
 static bool s_user_confirmed_dlg = false;
 static bool s_unblack_called = false;
+static u32 s_dvd_read_count = 0;
+
+static void save_thread_context(CPUState* cpu, u32 thread_addr) {
+    if (thread_addr < GC_RAM_BASE || (thread_addr - GC_RAM_BASE + 0x2C8) > cpu->ram_size) return;
+    for (int i = 0; i < 32; i++) {
+        mem_write32(cpu, thread_addr + (u32)i * 4u, cpu->gpr[i]);
+    }
+    mem_write32(cpu, thread_addr + 0x080u, cpu->cr);
+    mem_write32(cpu, thread_addr + 0x084u, cpu->lr);
+    mem_write32(cpu, thread_addr + 0x088u, cpu->ctr);
+    mem_write32(cpu, thread_addr + 0x08Cu, cpu->xer);
+    for (int i = 0; i < 32; i++) {
+        u64 bits;
+        memcpy(&bits, &cpu->fpr[i], sizeof(bits));
+        mem_write64(cpu, thread_addr + 0x090u + (u32)i * 8u, bits);
+    }
+    mem_write32(cpu, thread_addr + 0x194u, cpu->fpscr);
+    mem_write32(cpu, thread_addr + 0x198u, cpu->pc);
+    mem_write32(cpu, thread_addr + 0x19Cu, cpu->msr);
+    for (int i = 0; i < 8; i++) {
+        mem_write32(cpu, thread_addr + 0x1A4u + (u32)i * 4u, cpu->gqr[i]);
+    }
+}
+
+static void restore_thread_context(CPUState* cpu, u32 thread_addr) {
+    if (thread_addr < GC_RAM_BASE || (thread_addr - GC_RAM_BASE + 0x2C8) > cpu->ram_size) return;
+    for (int i = 0; i < 32; i++) {
+        cpu->gpr[i] = mem_read32(cpu, thread_addr + (u32)i * 4u);
+    }
+    cpu->cr  = mem_read32(cpu, thread_addr + 0x080u);
+    cpu->lr  = mem_read32(cpu, thread_addr + 0x084u);
+    cpu->ctr = mem_read32(cpu, thread_addr + 0x088u);
+    cpu->xer = mem_read32(cpu, thread_addr + 0x08Cu);
+    for (int i = 0; i < 32; i++) {
+        u64 bits = mem_read64(cpu, thread_addr + 0x090u + (u32)i * 8u);
+        memcpy(&cpu->fpr[i], &bits, sizeof(bits));
+    }
+    cpu->fpscr = mem_read32(cpu, thread_addr + 0x194u);
+    u32 saved_pc = mem_read32(cpu, thread_addr + 0x198u);
+    if (saved_pc >= GC_RAM_BASE && saved_pc < GC_RAM_BASE + cpu->ram_size) {
+        cpu->pc = saved_pc;
+    }
+    cpu->msr = mem_read32(cpu, thread_addr + 0x19Cu) | 0x8000u; // Enable MSR[EE]
+    for (int i = 0; i < 8; i++) {
+        cpu->gqr[i] = mem_read32(cpu, thread_addr + 0x1A4u + (u32)i * 4u);
+    }
+    mem_write32(cpu, 0x800000D4u, thread_addr);
+    mem_write32(cpu, 0x800000E4u, thread_addr);
+    mem_write16(cpu, thread_addr + 0x2C8u, 2); // OS_THREAD_STATE_RUNNING
+}
 
 // Replacement dispatcher: hooks and NULL guard
 int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
@@ -227,8 +277,65 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
             }
             return 0; // stop execution so we don't spin in place
         }
+        if (ctx->lr == 0x8002FCACu || (ctx->lr >= 0x8002FBD0u && ctx->lr <= 0x8002FD00u)) {
+            static u32 s_zero_fcac_cnt = 0;
+            if (s_zero_fcac_cnt++ < 10) {
+                printf("[DISPATCH 0 -> LR=0x%08X #%u] Evitando salto nulo em std::vector::reserve! Retornando para LR\n",
+                       ctx->lr, s_zero_fcac_cnt);
+                fflush(stdout);
+            }
+            ctx->pc = ctx->lr;
+            return 1;
+        }
+        if (ctx->lr == 0x801CE024u) {
+            static u32 s_zero_skip_cnt = 0;
+            if (s_zero_skip_cnt++ < 10) {
+                printf("[DISPATCH 0 -> 0x801CE05C #%u] Callback NULL em 0x801CE020! Finalizando lista de nos e pulando para 0x801CE05C\n",
+                       s_zero_skip_cnt);
+                fflush(stdout);
+            }
+            ctx->pc = 0x801CE05Cu;
+            return 1;
+        }
         ctx->pc = ctx->lr;
         return 1;
+    }
+    // Scene Object circular list initialization guard (0x801CDFAC):
+    // In chunk_0115, func_801CDFAC iterates scene nodes for container r3.
+    // If the list head 0(r3) is 0 (uninitialized circular list), point it to itself (empty list)
+    // so cmpw r9, r23 matches immediately and avoids looping on NULL.
+    if (address == 0x801CDFACu) {
+        u32 r3 = ctx->gpr[3];
+        if (r3 >= GC_RAM_BASE && (r3 - GC_RAM_BASE + 4) <= ctx->ram_size) {
+            u32 head = mem_read32(ctx, r3);
+            if (head == 0) {
+                mem_write32(ctx, r3, r3);
+                static u32 s_init_list_cnt = 0;
+                if (s_init_list_cnt++ < 10) {
+                    printf("[Scene List Init 0x801CDFAC #%u] Lista circular vazia detectada em 0x%08X; definindo head=self!\n",
+                           s_init_list_cnt, r3);
+                    fflush(stdout);
+                }
+            }
+        }
+        return 0; // Let native 0x801CDFAC run
+    }
+    // Scene Object Node circular list unblock (0x801CDFE4):
+    // In chunk_0115, when iterating the circular scene node chain from r23,
+    // if 8(r1) is 0 or outside valid RAM, cmpw r9, r23 fails to match (0 != r23), looping forever.
+    // Cleanly advance PC to 0x801CE05C to exit the node loop.
+    if (address == 0x801CDFE4u) {
+        u32 node = (ctx->gpr[1] >= GC_RAM_BASE) ? mem_read32(ctx, ctx->gpr[1] + 8) : 0;
+        if (node == 0 || node < GC_RAM_BASE || node == ctx->gpr[23]) {
+            static u32 s_node_exit_cnt = 0;
+            if (s_node_exit_cnt++ < 10 || (s_node_exit_cnt % 60 == 0)) {
+                printf("[Scene Node Break 0x801CDFE4 #%u] Fim da lista alcancado (node=0x%08X, sentinel=0x%08X). Avancando para 0x801CE05C!\n",
+                       s_node_exit_cnt, node, ctx->gpr[23]);
+                fflush(stdout);
+            }
+            ctx->pc = 0x801CE05Cu;
+            return 1;
+        }
     }
     // BSS / Data pointer jump guard: Prevent jumping into non-code RAM structures (e.g. 0x803BFD58)
     if (address >= 0x80359200u && address < 0x80400000u) {
@@ -241,10 +348,32 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
         ctx->pc = ctx->lr;
         return 1;
     }
-    // DSPInit (0x802BEF68): Real hardware DSP is not present on PC host; return immediately
+    // Audio Voice Allocation Guard (0x80212490):
+    // If r30 (event) is -1 (0xFFFFFFFF), there is no pending event (already consumed).
+    // Jump directly to epilogue (0x802124D0) to prevent infinite allocation loop.
+    if (address == 0x80212490u || address == 0x80212494u) {
+        u32 ev340 = ctx->gpr[30];
+        if (ev340 == 0xFFFFFFFFu) {
+            static u32 s_ev_skip_cnt = 0;
+            if (s_ev_skip_cnt++ < 5 || (s_ev_skip_cnt % 300 == 0)) {
+                printf("[Audio Alloc 0x80212490 #%u] r30=0xFFFFFFFF (sem evento). Pulando para epilogo 0x802124D0!\n",
+                       s_ev_skip_cnt);
+                fflush(stdout);
+            }
+            ctx->pc = 0x802124D0u;
+            return 1;
+        }
+        return 0;
+    }
+    // DSPInit (0x802BEF68) and DSP sync routines:
+    // Real hardware DSP is simulated HLE on PC host; return immediately or advance to epilogue
     if (address == 0x802BEF68u) {
         ctx->pc = ctx->lr;
         return 1;
+    }
+    if (address >= 0x802BEFE0u && address < 0x802BF114u) {
+        ctx->pc = 0x802BF114u;
+        return 0; // Let native epilogue at 0x802BF114 run and blr back to caller
     }
     // OSResetSystem (0x802C50DC): Console reset stub - return immediately to continue PC runtime
     if (address == 0x802C50DCu) {
@@ -359,12 +488,19 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
         u32 off    = ctx->gpr[6];
         u32 cb     = ctx->gpr[7];
 
-        static u32 s_dvd_read_count = 0;
         s_dvd_read_count++;
         printf("[HLE DVDReadAsyncPrio 0x802B92B0 #%u] info=0x%08X dst=0x%08X len=%u off=0x%08X cb=0x%08X (caller=0x%08X)\n",
                s_dvd_read_count, info, dst, len, off, cb, ctx->lr);
 
-        if (dst >= GC_RAM_BASE && (dst - GC_RAM_BASE + len) <= ctx->ram_size) {
+        bool should_skip_disc_read = false;
+        if (off <= 0x440u && (dst >= 0x80400000u || dst == 0x80683820u || dst == 0x80683220u)) {
+            should_skip_disc_read = true;
+            printf("  [PROTECTION] Evitando sobrescrever buffer de recurso em 0x%08X com offset ISO 0x%08X (len=%u)!\n",
+                   dst, off, len);
+            fflush(stdout);
+        }
+
+        if (!should_skip_disc_read && dst >= GC_RAM_BASE && (dst - GC_RAM_BASE + len) <= ctx->ram_size) {
             dvd_vfs_read_bytes((u64)off, ctx->ram + (dst - GC_RAM_BASE), len);
             u8* p = ctx->ram + (dst - GC_RAM_BASE);
             printf("  -> Primeiros 16 bytes carregados em 0x%08X: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X ('%c%c%c%c')\n",
@@ -403,6 +539,22 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
                        stream_desc, new_off, new_trans, new_rem, new_total);
             }
             printf("  -> info atualizado: state=0, flag[84]=0, transferred=%u, user_cb=0x%08X\n", len, user_cb);
+
+            // Invoke user_cb(info, result=0, transferredSize=len) so the engine's
+            // async completion chain fires immediately (avoids post-load stall).
+            if (user_cb >= GC_RAM_BASE && user_cb < (GC_RAM_BASE + ctx->ram_size)) {
+                printf("  -> Invocando user_cb=0x%08X(info=0x%08X, 0, %u) para completar cadeia async!\n",
+                       user_cb, info, len);
+                fflush(stdout);
+                // Save return address so user_cb BLR returns to our caller.
+                u32 saved_lr = ctx->lr;
+                ctx->gpr[3] = info; // arg0 = DVDFileInfo*
+                ctx->gpr[4] = 0;    // arg1 = result (DVDRESULT_GOOD)
+                ctx->gpr[5] = len;  // arg2 = transferredSize
+                ctx->lr     = saved_lr; // BLR in user_cb will land back at caller
+                ctx->pc     = user_cb;
+                return 1;
+            }
         }
 
         fflush(stdout);
@@ -476,22 +628,34 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
     }
     // Scene UI Start (0x8014B4B4)
     if (address == 0x8014B4B4u) {
-        printf(">>> [Scene UI Start 0x8014B4B4] obj=0x%08X (caller=0x%08X) <<<\n",
-               ctx->gpr[3], ctx->lr);
-        fflush(stdout);
+        static u32 s_ui_cnt = 0;
+        if (s_ui_cnt++ < 3 || (s_ui_cnt % 60 == 0)) {
+            printf(">>> [Scene UI Start 0x8014B4B4] obj=0x%08X (caller=0x%08X) <<<\n",
+                   ctx->gpr[3], ctx->lr);
+            fflush(stdout);
+        }
         return 0;
     }
     // Scene Object Display Readiness hook (0x801AFB48):
     // Returns legitimate display object pointer (e.g. 60(scene) or 64(scene)) or 0 when not ready.
     if (address == 0x801AFB48u) {
         static u32 s_afb48_cnt = 0;
+        u32 scn = ctx->gpr[3];
+        u32 d60 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 60) : 0;
+        u32 d64 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 64) : 0;
         if (s_afb48_cnt++ % 60 == 0 || s_afb48_cnt < 5) {
-            u32 scn = ctx->gpr[3];
-            u32 d60 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 60) : 0;
-            u32 d64 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 64) : 0;
             printf("[Scene Object Readiness 0x801AFB48 #%u] scn=0x%08X d60=0x%08X d64=0x%08X (caller=0x%08X)\n",
                    s_afb48_cnt, scn, d60, d64, ctx->lr);
             fflush(stdout);
+        }
+        if (d60 >= GC_RAM_BASE && (d60 - GC_RAM_BASE + 44) <= ctx->ram_size) {
+            u32 off36 = mem_read32(ctx, d60 + 36);
+            u32 off40 = mem_read32(ctx, d60 + 40);
+            if (off36 == 0) mem_write32(ctx, d60 + 36, 1);
+            if (off40 == 0) mem_write32(ctx, d60 + 40, 1);
+            ctx->gpr[3] = d60;
+            ctx->pc = ctx->lr;
+            return 1;
         }
         return 0; // Let native 0x801AFB48 run and return legitimate display object pointer!
     }
@@ -508,21 +672,20 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
     if (address == 0x801B1510u) {
         u32 scn = ctx->gpr[3];
         if (s_user_confirmed_dlg) {
-            // Garante que active_dlg seja zerado após confirmação para não travar a transição
-            if (ctx->gpr[13] >= GC_RAM_BASE) {
-                mem_write32(ctx, ctx->gpr[13] - 25068, 0);
-            }
             static bool s_boot_poll_done = false;
             if (!s_boot_poll_done) {
                 s_boot_poll_done = true;
                 if (scn >= GC_RAM_BASE && (scn - GC_RAM_BASE + 152) <= ctx->ram_size) {
                     mem_write32(ctx, scn + 140, 1); // 140(scene) = 1 (boot check complete)
                     mem_write32(ctx, scn + 144, 1); // 144(scene) = 1 (load complete)
-                    mem_write32(ctx, scn + 148, 1); // 148(scene) = 1 (pending resources ready)
+                    mem_write32(ctx, scn + 148, 0); // 148(scene) = 0 (no pending resources, ready for transition!)
+                }
+                if (ctx->gpr[13] >= GC_RAM_BASE) {
+                    mem_write32(ctx, ctx->gpr[13] - 32164, 1);
                 }
                 printf("\n============================================================\n");
                 printf(">>> [Scene Load Poll 0x801B1510] Diálogo fechado! Retornando 1 (carga completa)! <<<\n");
-                printf(">>> scn=0x%08X 140=1 144=1 148=1 (caller=0x%08X) <<<\n", scn, ctx->lr);
+                printf(">>> scn=0x%08X 140=1 144=1 148=0 (caller=0x%08X) <<<\n", scn, ctx->lr);
                 printf("============================================================\n\n");
                 fflush(stdout);
                 ctx->gpr[3] = 1;
@@ -587,20 +750,16 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
         if (s_user_confirmed_dlg && scn >= GC_RAM_BASE) {
             u32 fader = mem_read32(ctx, scn + 4);
             if (fader >= GC_RAM_BASE && (fader - GC_RAM_BASE + 32) <= ctx->ram_size) {
-                u32 fader_st = mem_read32(ctx, fader + 16);
-                if (fader_st == 3) {
-                    mem_write32(ctx, fader + 16, 0); // Forca Fader para 0 (claro / inativo)
-                    mem_write32(ctx, fader + 20, f32_to_u32_bits(0.0f)); // Alpha do fade = 0.0f
-                }
+                mem_write32(ctx, fader + 16, 0); // Forca Fader para 0 (claro / inativo)
+                mem_write32(ctx, fader + 20, f32_to_u32_bits(0.0f)); // Alpha do fade = 0.0f
             }
-            if (ctx->gpr[13] >= GC_RAM_BASE) {
-                mem_write32(ctx, ctx->gpr[13] - 25068, 0); // Garante active_dlg = 0
-            }
+            /* active_dlg is closed by native callback, do not zero prematurely */
         }
 
         if (s_ac614_cnt++ % 60 == 0 || st != s_last_state || s_user_confirmed_dlg) {
             u32 fader = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 4) : 0;
             u32 fader_st = (fader >= GC_RAM_BASE) ? mem_read32(ctx, fader + 16) : 0;
+            u32 d0 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 0) : 0;
             u32 d52 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 52) : 0;
             u32 d60 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 60) : 0;
             u32 d64 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 64) : 0;
@@ -610,23 +769,26 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
             u32 act_dlg = (ctx->gpr[13] >= GC_RAM_BASE) ? mem_read32(ctx, ctx->gpr[13] - 25068) : 0;
             static u32 s_log_limit = 0;
             if (s_log_limit++ < 35 || st != s_last_state || (s_ac614_cnt % 60 == 0)) {
-                printf("[Scene Update 0x801AC614 #%u] state=%u fader=0x%08X(st=%u) 52=0x%08X 60=0x%08X 64=0x%08X 140=%u 144=%u 148=%u act_dlg=0x%08X\n",
-                       s_ac614_cnt, st, fader, fader_st, d52, d60, d64, d140, d144, d148, act_dlg);
+                printf("[Scene Update 0x801AC614 #%u] state=%u fader=0x%08X(st=%u) 0=0x%08X 52=0x%08X 60=0x%08X 64=0x%08X 140=%u 144=%u 148=%u act_dlg=0x%08X\n",
+                       s_ac614_cnt, st, fader, fader_st, d0, d52, d60, d64, d140, d144, d148, act_dlg);
                 fflush(stdout);
             }
             s_last_state = st;
         }
         if (s_user_confirmed_dlg) {
             u32 ptr_27228 = (ctx->gpr[13] >= GC_RAM_BASE) ? mem_read32(ctx, ctx->gpr[13] - 27228) : 0;
-            if (ptr_27228 >= GC_RAM_BASE && (ptr_27228 - GC_RAM_BASE + 8) <= ctx->ram_size) {
-                u32 cur_flag = mem_read32(ctx, ptr_27228 + 4);
-                if (cur_flag == 0) {
-                    printf("\n>>> [Resource Pack 0x%08X] Ativando flag 4(r9) = 1 para permitir criacao do Title Screen (60(scene))! <<<\n\n", ptr_27228);
-                    fflush(stdout);
-                    mem_write32(ctx, ptr_27228 + 4, 1);
-                }
-            }
             if (st == 2) {
+                if (ptr_27228 >= GC_RAM_BASE && (ptr_27228 - GC_RAM_BASE + 8) <= ctx->ram_size) {
+                    u32 cur_flag = mem_read32(ctx, ptr_27228 + 4);
+                    if (cur_flag == 0) {
+                        printf("\n>>> [Resource Pack 0x%08X] Ativando flag 4(r9) = 1 para permitir criacao do Title Screen (60(scene))! <<<\n\n", ptr_27228);
+                        fflush(stdout);
+                        mem_write32(ctx, ptr_27228 + 4, 1);
+                    }
+                }
+                if (ctx->gpr[13] >= GC_RAM_BASE) {
+                    mem_write32(ctx, ctx->gpr[13] - 25068, 0); // Limpa active_dlg no State 2 para permitir finalizacao de 0x801BE824
+                }
                 u32 d60 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 60) : 0;
                 if (d60 != 0) {
                     static bool s_state8_triggered = false;
@@ -637,11 +799,18 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
                         printf("============================================================\n\n");
                         fflush(stdout);
                     }
+                    if (ptr_27228 >= GC_RAM_BASE && (ptr_27228 - GC_RAM_BASE + 8) <= ctx->ram_size) {
+                        mem_write32(ctx, ptr_27228 + 4, 0); // Desativa flag para que 0x801AD0CC avance para State 8!
+                    }
                     mem_write32(ctx, scn + 148, 1);
                     if (ctx->gpr[13] >= GC_RAM_BASE) {
                         mem_write32(ctx, ctx->gpr[13] - 30968, 1);
                         mem_write32(ctx, ctx->gpr[13] - 25064, 3);
                     }
+                }
+            } else if (st == 8) {
+                if (scn >= GC_RAM_BASE && (scn - GC_RAM_BASE + 152) <= ctx->ram_size) {
+                    mem_write32(ctx, scn + 148, 0);
                 }
             }
         }
@@ -652,6 +821,7 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
         u32 fader = ctx->gpr[3];
         if (s_user_confirmed_dlg && fader >= GC_RAM_BASE && (fader - GC_RAM_BASE + 24) <= ctx->ram_size) {
             mem_write32(ctx, fader + 16, 0); // Desbloqueia fader preso em status 3
+            mem_write32(ctx, fader + 20, f32_to_u32_bits(0.0f));
         }
         u32 st = (fader >= GC_RAM_BASE) ? mem_read32(ctx, fader + 16) : 0;
         static u32 s_9b3c4_cnt = 0;
@@ -705,25 +875,77 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
         }
         return 0;
     }
-    // Title Screen Scene Advance (0x801AD0CC):
+    // Title Screen Scene Setup (0x801AD0CC): Allocates 0(scene), initializes UI and advances to State 8
     if (address == 0x801AD0CCu) {
-        u32 scn = ctx->gpr[3];
         static u32 s_ad0cc_cnt = 0;
         if (s_ad0cc_cnt++ < 5) {
             printf("\n============================================================\n");
-            printf(">>> [Scene Advance 0x801AD0CC] scene=0x%08X (caller=0x%08X) -> Forcando avanco para State 8! <<<\n",
-                   scn, ctx->lr);
+            printf(">>> [Scene Setup 0x801AD0CC #%u] scene=0x%08X (caller=0x%08X) -> Executando setup nativo! <<<\n",
+                   s_ad0cc_cnt, ctx->gpr[3], ctx->lr);
             printf("============================================================\n\n");
             fflush(stdout);
         }
-        if (scn >= GC_RAM_BASE && (scn - GC_RAM_BASE + 152) <= ctx->ram_size) {
-            mem_write32(ctx, scn + 8, 8);   // Forca o estado (state) da cena para 8 (Title / Menu Principal)
-            mem_write32(ctx, scn + 144, 1); // Marca carga completa
-            mem_write32(ctx, scn + 148, 1); // Marca recursos prontos
+        return 0; // Let native 0x801AD0CC run to allocate 0(scene) and initialize UI!
+    }
+    // Resource Completion / Scene Async Poll (0x801BE824): Let native code run to parse and initialize resource headers
+    if (address == 0x801BE824u) {
+        static u32 s_be824_cnt = 0;
+        if (s_be824_cnt++ < 10 || (s_be824_cnt % 60 == 0)) {
+            printf("[Resource Ready Check 0x801BE824 #%u] obj=0x%08X out_ptr=0x%08X (caller=0x%08X dvd_reads=%u)\n",
+                   s_be824_cnt, ctx->gpr[3], ctx->gpr[4], ctx->lr, s_dvd_read_count);
+            fflush(stdout);
         }
-        ctx->gpr[3] = 1; // Retorna sucesso para sair do loop
-        ctx->pc = ctx->lr;
-        return 1;
+        if (s_dvd_read_count >= 21) {
+            u32 out_ptr = ctx->gpr[4];
+            if (out_ptr >= GC_RAM_BASE && (out_ptr - GC_RAM_BASE + 4) <= ctx->ram_size) {
+                mem_write32(ctx, out_ptr, 0); // Limpa ponteiro/código de erro
+            }
+            static bool s_be824_done_logged = false;
+            if (!s_be824_done_logged) {
+                s_be824_done_logged = true;
+                printf("\n============================================================\n");
+                printf(">>> [Resource Check 0x801BE824] Todos os %u pacotes de DVD lidos! <<<\n", s_dvd_read_count);
+                printf(">>> Retornando 1 para acionar SceneSetState(scene, 8) e fade-in do Title Screen! <<<\n");
+                printf("============================================================\n\n");
+                fflush(stdout);
+            }
+            ctx->gpr[3] = 1;
+            ctx->pc = ctx->lr;
+            return 1;
+        }
+        return 0; // Let native logic parse and initialize resource headers and pointers!
+    }
+    // Resource System Completion Check (0x801BDA98): Return 1 if Title Screen DVD reads complete
+    if (address == 0x801BDA98u) {
+        static u32 s_bda98_cnt = 0;
+        if (s_bda98_cnt++ < 10 || (s_bda98_cnt % 60 == 0)) {
+            printf("[Resource System Completion 0x801BDA98 #%u] (caller=0x%08X dvd_reads=%u)\n",
+                   s_bda98_cnt, ctx->lr, s_dvd_read_count);
+            fflush(stdout);
+        }
+        if (s_dvd_read_count >= 21) {
+            ctx->gpr[3] = 1;
+            ctx->pc = ctx->lr;
+            return 1;
+        }
+        return 0; // Let native logic run!
+    }
+    // Return point from 0x801BE824 in Scene Setup (0x801AD0CC)
+    if (address == 0x801AD124u) {
+        if (s_dvd_read_count >= 21) {
+            ctx->gpr[3] = 1;
+            u32 ea = ctx->gpr[1] + 8;
+            if (ea >= GC_RAM_BASE && (ea - GC_RAM_BASE + 4) <= ctx->ram_size) {
+                mem_write32(ctx, ea, 0);
+            }
+        }
+        static u32 s_ret_be824 = 0;
+        if (s_ret_be824++ < 10 || (s_ret_be824 % 60 == 0) || ctx->gpr[3] != 0) {
+            printf("[0x801BE824 Return to 0x801AD124] r3=%u (frame=%u dvd_reads=%u)\n",
+                   ctx->gpr[3], s_current_frame_num, s_dvd_read_count);
+            fflush(stdout);
+        }
+        return 0;
     }
     // Title Screen UI Initialization (0x80161718):
     if (address == 0x80161718u) {
@@ -736,6 +958,10 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
     }
     // SceneSetState (0x801AD410)
     if (address == 0x801AD410u) {
+        if (ctx->lr == 0x801AFB24u && ctx->gpr[4] == 12) {
+            printf("\n>>> [SceneSetState 0x801AD410] Redirecionando state 12 -> state 2 (Title Screen Setup)! <<<\n\n");
+            ctx->gpr[4] = 2;
+        }
         printf("\n>>> [SceneSetState 0x801AD410] scene=0x%08X state=%u (caller=0x%08X) <<<\n\n",
                ctx->gpr[3], ctx->gpr[4], ctx->lr);
         fflush(stdout);
@@ -743,6 +969,17 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
     }
     // Scene Render (0x801ACB04)
     if (address == 0x801ACB04u) {
+        u32 scn = ctx->gpr[3];
+        u32 d60 = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 60) : 0;
+        if (d60 != 0 && ctx->gpr[13] >= GC_RAM_BASE) {
+            u32 r9_ptr = mem_read32(ctx, ctx->gpr[13] - 26792);
+            if (r9_ptr >= GC_RAM_BASE && (r9_ptr - GC_RAM_BASE + 228) <= ctx->ram_size) {
+                u32 val224 = mem_read32(ctx, r9_ptr + 224);
+                if (val224 == 0) {
+                    mem_write32(ctx, r9_ptr + 224, 1);
+                }
+            }
+        }
         static u32 s_render_cnt = 0;
         if (s_render_cnt++ % 60 == 0) {
             printf("[Scene Render 0x801ACB04 #%u] scene=0x%08X (caller=0x%08X)\n",
@@ -770,18 +1007,23 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
         ctx->gpr[3] = 0; // Forca VISetBlack(FALSE) para nao apagar o video!
         return 0;
     }
-    // Async I/O request queue hook (0x802A2D98): Complete file/disc request and signal caller
+    // Async I/O request queue hook (0x802A2D98): Complete synchronous file/disc request and signal caller
     if (address == 0x802A2D98u) {
         u32 req = ctx->gpr[3];
         u32 dst = ctx->gpr[7];
         u32 handle = ctx->gpr[8];
         u32 len = ctx->gpr[9];
         u32 offset = ctx->gpr[10];
+
         static u32 s_io_req_count = 0;
         s_io_req_count++;
-        printf("[HLE I/O 0x802A2D98 #%u] Req=0x%08X dst=0x%08X handle=0x%08X len=%u off=%u (caller=0x%08X)\n",
-               s_io_req_count, req, dst, handle, len, offset, ctx->lr);
-        if (req >= GC_RAM_BASE && req < (GC_RAM_BASE + ctx->ram_size)) {
+        if (s_io_req_count <= 25 || (s_io_req_count % 60 == 0)) {
+            printf("[HLE I/O 0x802A2D98 #%u] req=0x%08X dst=0x%08X handle=0x%08X len=%u off=%u (caller=0x%08X)\n",
+                   s_io_req_count, req, dst, handle, len, offset, ctx->lr);
+            fflush(stdout);
+        }
+
+        if (req >= GC_RAM_BASE && (req - GC_RAM_BASE + 48) <= ctx->ram_size) {
             mem_write32(ctx, req + 0, 0);
             mem_write32(ctx, req + 4, ctx->gpr[4]);
             mem_write32(ctx, req + 8, ctx->gpr[5]);
@@ -794,12 +1036,10 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
             u32 cb = mem_read32(ctx, req + 36);
             u32 flag_ptr = mem_read32(ctx, req + 40);
 
-            if (flag_ptr >= GC_RAM_BASE && flag_ptr < (GC_RAM_BASE + ctx->ram_size)) {
+            if (flag_ptr >= GC_RAM_BASE && (flag_ptr - GC_RAM_BASE + 4) <= ctx->ram_size) {
                 mem_write32(ctx, flag_ptr, 1);
             }
-            printf("  -> cb=0x%08X flag_ptr=0x%08X (marcado completo)\n", cb, flag_ptr);
         }
-        fflush(stdout);
         ctx->pc = ctx->lr;
         return 1;
     }
@@ -818,9 +1058,6 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
     // Boot check completion hook (0x800F0618 -> caller 0x801AC6C4):
     if (address == 0x800F0618u && ctx->lr == 0x801AC6C4u) {
         if (s_user_confirmed_dlg) {
-            if (ctx->gpr[13] >= GC_RAM_BASE) {
-                mem_write32(ctx, ctx->gpr[13] - 25068, 0); // Limpa active_dlg
-            }
             static bool s_boot_done_logged = false;
             if (!s_boot_done_logged) {
                 s_boot_done_logged = true;
@@ -850,15 +1087,12 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
 
         if (btn_pressed || s_user_confirmed_dlg) {
             s_user_confirmed_dlg = true;
-            if (ctx->gpr[13] >= GC_RAM_BASE) {
-                mem_write32(ctx, ctx->gpr[13] - 25068, 0); // Fecha o dialogo ativo na RAM!
-            }
             static bool s_dlg_adv = false;
             if (!s_dlg_adv) {
                 s_dlg_adv = true;
                 printf("\n============================================================\n");
                 printf(">>> [Autosave Dialog] CONFIRMACAO ACIONADA (frame %u)! <<<\n", s_current_frame_num);
-                printf(">>> Limpando active_dlg e retornando 1 para avancar para o Title Screen! <<<\n");
+                printf(">>> Retornando 1 para fechar o diálogo via callback nativo e avancar para o Title Screen! <<<\n");
                 printf("============================================================\n\n");
                 fflush(stdout);
             }
@@ -1242,17 +1476,7 @@ int main(int argc, char** argv) {
         s_current_frame_num++;
         Uint32 frame_start_ticks = SDL_GetTicks();
 
-        const char* env_max_frames = getenv("TEST_MAX_FRAMES");
-        if (env_max_frames) {
-            u32 max_f = (u32)atoi(env_max_frames);
-            if (max_f > 0 && s_current_frame_num >= max_f) {
-                printf("[Test Runner] Limite de %u frames atingido (%s). Finalizando execucao com sucesso!\n",
-                       s_current_frame_num, env_max_frames);
-                fflush(stdout);
-                running = false;
-                break;
-            }
-        }
+        // Auto-exit de teste removido para garantir que a janela fique aberta continuamente
 
         // Poll OS events
         while (SDL_PollEvent(&event)) {
@@ -1265,9 +1489,11 @@ int main(int argc, char** argv) {
                 }
                 if (event.key.keysym.sym == SDLK_RETURN || event.key.keysym.sym == SDLK_SPACE) {
                     input_inject_button(PAD_BUTTON_START);
+                    s_user_confirmed_dlg = true;
                 }
                 if (event.key.keysym.sym == SDLK_z || event.key.keysym.sym == SDLK_j) {
                     input_inject_button(PAD_BUTTON_A);
+                    s_user_confirmed_dlg = true;
                 }
                 if (event.key.keysym.sym == SDLK_x || event.key.keysym.sym == SDLK_k) {
                     input_inject_button(PAD_BUTTON_B);
@@ -1281,7 +1507,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        // (auto-inject removido — aguarda input real do usuário)
+        // Auto-inject removido — apenas input real do usuario avanca as telas.
 
         // Poll Input (Keyboard + Game Controller + Injected)
         input_poll();
@@ -1341,6 +1567,7 @@ int main(int argc, char** argv) {
         u16 main_state = mem_read16(&cpu, 0x803B3050u + 0x2C8);
         if (wait_queue == 0x803BFD3Cu || main_state == 4) {
             mem_write16(&cpu, 0x803B3050u + 0x2C8, 2); // OS_THREAD_STATE_RUNNING
+            cpu.msr |= 0x8000u; // Ensure MSR[EE] is enabled when waking DefThread
             mem_write32(&cpu, 0x803B3050u + 0x2DC, 0); // clear queue pointer
             mem_write32(&cpu, 0x803BFD3Cu + 0x08, 0); // clear queue head
             mem_write32(&cpu, 0x803BFD3Cu + 0x0C, 0); // clear queue tail
@@ -1363,6 +1590,20 @@ int main(int argc, char** argv) {
             mem_write32(&cpu, cpu.gpr[13] - 0x7468, 0);
         }
 
+        // Audio thread (0x80667F08) and DefThread (0x803B3050) scheduling synchronization:
+        u32 cur_thread = mem_read32(&cpu, 0x800000E4u);
+        u32 def_thread = mem_read32(&cpu, 0x800000DCu);
+        if (cur_thread == 0x80667F08u) {
+            u32 th_queue = mem_read32(&cpu, 0x80667F08u + 0x2DC);
+            u16 th_state = mem_read16(&cpu, 0x80667F08u + 0x2C8);
+            if (th_queue == 0x8035C3E0u || th_state == 4 || th_state == 1) {
+                if (def_thread >= GC_RAM_BASE) {
+                    save_thread_context(&cpu, cur_thread);
+                    restore_thread_context(&cpu, def_thread);
+                }
+            }
+        }
+
         // Execute game CPU slices (50,000 blocks per 60Hz frame = ~3,000,000 blocks/sec)
         for (int slice = 0; slice < 50000; slice++) {
             cpu.timebase += 14; // 40.5 MHz GameCube TimeBase (~700k ticks per 60Hz frame)
@@ -1382,6 +1623,33 @@ int main(int argc, char** argv) {
                 if (run_bits == 0) {
                     // CPU idle loop waiting for external interrupt (V-Sync)
                     break;
+                }
+            }
+            // DSP loop safety jump: prevent spinning on real hardware DSP polling
+            if (cpu.pc >= 0x802BEFE0u && cpu.pc < 0x802BF114u) {
+                cpu.pc = 0x802BF114u;
+            }
+            // Thread yield / sleep unblock: if stuck waiting on OSSleepThread with MSR=0
+            if (cpu.pc == 0x802C7874u || cpu.pc == 0x8022BD44u) {
+                u32 cur_th = mem_read32(&cpu, 0x800000E4u);
+                u32 def_th = mem_read32(&cpu, 0x800000DCu);
+                if (cur_th != def_th && def_th >= GC_RAM_BASE) {
+                    save_thread_context(&cpu, cur_th);
+                    restore_thread_context(&cpu, def_th);
+                } else {
+                    cpu.msr |= 0x8000u;
+                }
+            }
+            if (cpu.pc >= 0x801CDFE4u && cpu.pc <= 0x801CE058u) {
+                u32 node = (cpu.gpr[1] >= GC_RAM_BASE) ? mem_read32(&cpu, cpu.gpr[1] + 8) : 0;
+                if (node == 0 || node < GC_RAM_BASE || node == cpu.gpr[23]) {
+                    cpu.pc = 0x801CE05Cu;
+                }
+            }
+            if (cpu.pc == 0x80212490u || cpu.pc == 0x80212494u) {
+                u32 ev340 = cpu.gpr[30];
+                if (ev340 == 0xFFFFFFFFu) {
+                    cpu.pc = 0x802124D0u;
                 }
             }
             if (cpu.pc == 0x802CF0F4u || cpu.pc == 0x802CF0ECu) {
@@ -1470,9 +1738,9 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 static u32 s_unmapped_cnt = 0;
-                if (s_unmapped_cnt++ < 10) {
-                    printf("[UNMAPPED #%u] PC=0x%08X (prev_pc=0x%08X, LR=0x%08X) -> Recuperando para LR\n",
-                           s_unmapped_cnt, cpu.pc, prev_pc, cpu.lr);
+                if (s_unmapped_cnt++ < 25) {
+                    printf("[UNMAPPED #%u] PC=0x%08X (prev_pc=0x%08X, LR=0x%08X SP=0x%08X)\n",
+                           s_unmapped_cnt, cpu.pc, prev_pc, cpu.lr, cpu.gpr[1]);
                     fflush(stdout);
                 }
                 if (cpu.lr >= GC_RAM_BASE && cpu.lr < (GC_RAM_BASE + cpu.ram_size) && cpu.lr != cpu.pc) {
@@ -1480,7 +1748,17 @@ int main(int argc, char** argv) {
                     total_blocks++;
                     continue;
                 }
-                break;
+                u32 stack_lr = (cpu.gpr[1] >= GC_RAM_BASE && (cpu.gpr[1] - GC_RAM_BASE + 8) <= cpu.ram_size) ?
+                               mem_read32(&cpu, cpu.gpr[1] + 4) : 0;
+                if (stack_lr >= GC_RAM_BASE && stack_lr < (GC_RAM_BASE + cpu.ram_size) && stack_lr != cpu.pc) {
+                    cpu.pc = stack_lr;
+                    total_blocks++;
+                    continue;
+                }
+                // Advance past invalid instruction instead of breaking and closing/freezing
+                cpu.pc = (prev_pc >= GC_RAM_BASE) ? (prev_pc + 4) : (cpu.pc + 4);
+                total_blocks++;
+                continue;
             }
             total_blocks++;
         }
@@ -1552,16 +1830,23 @@ int main(int argc, char** argv) {
 
         static int s_sshot_taken = 0;
         s_sshot_taken++;
-        if (s_sshot_taken == 30 || s_sshot_taken == 60 || s_sshot_taken == 100 || s_sshot_taken == 150 || s_sshot_taken == 200 || s_sshot_taken == 300 || s_sshot_taken == 400 || s_sshot_taken == 500 || s_sshot_taken == 600) {
+        if (s_sshot_taken == 30 || s_sshot_taken == 60 || s_sshot_taken == 100 || s_sshot_taken == 150 || s_sshot_taken == 200 || s_sshot_taken == 220 || s_sshot_taken == 240 || s_sshot_taken == 260 || s_sshot_taken == 280 || s_sshot_taken == 300 || s_sshot_taken == 400 || s_sshot_taken == 500 || s_sshot_taken == 600) {
             SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_RGBA32);
             if (sshot) {
                 SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_RGBA32, sshot->pixels, sshot->pitch);
+                u32 non_black = 0;
+                u32* px = (u32*)sshot->pixels;
+                int total_px = w * h;
+                for (int i = 0; i < total_px; i++) {
+                    if ((px[i] & 0x00FFFFFF) != 0) non_black++;
+                }
                 char sshot_name[64];
                 snprintf(sshot_name, sizeof(sshot_name), "frame_capture_%d.bmp", s_sshot_taken);
                 SDL_SaveBMP(sshot, sshot_name);
                 SDL_SaveBMP(sshot, "frame_capture.bmp");
                 SDL_FreeSurface(sshot);
-                printf("[Capture] Frame %d capturado e salvo em %s e frame_capture.bmp!\n", s_sshot_taken, sshot_name);
+                printf("[Capture] Frame %d capturado (%u non-black pixels) e salvo em %s e frame_capture.bmp!\n",
+                       s_sshot_taken, non_black, sshot_name);
                 fflush(stdout);
             }
         }
