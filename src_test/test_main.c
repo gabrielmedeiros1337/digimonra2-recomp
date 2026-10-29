@@ -1805,7 +1805,16 @@ int main(int argc, char** argv) {
         SDL_RenderClear(renderer);
 
         int w, h;
-        SDL_GetWindowSize(window, &w, &h);
+        // Use RenderGetOutputSize (physical pixels) — SDL_GetWindowSize returns
+        // logical DPI-scaled pixels which can be wrong on high-DPI Windows systems.
+        SDL_GetRendererOutputSize(renderer, &w, &h);
+        // Sanity fallback: if SDL returns nonsense (e.g. h=44 due to DPI virtualization),
+        // fall back to the window's requested size.
+        if (w < 320 || h < 240) {
+            SDL_GetWindowSize(window, &w, &h);
+        }
+        if (w < 320) w = 1280;
+        if (h < 240) h = 720;
         video_present_frame(renderer, &cpu, w, h);
 
         // Render extracted 2D primitives directly to the SDL2 renderer
