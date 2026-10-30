@@ -295,15 +295,7 @@ u64 audio_read_ai(CPUState* cpu, u32 reg_offset, u8 size) {
     }
     // 0xCC005004 (DSP_MAIL_FROM_DSP_HI)
     if (reg_offset == 0x04) {
-        // When polling for DSP to become ready to receive (0x802BEFEC loop), return 0
-        if (cpu->pc >= 0x802BEFE0u && cpu->pc <= 0x802BF008u) {
-            return 0;
-        }
-        // When polling for DSP mailbox clear to send (0x802BF198 loop), return 0
-        if (cpu->pc >= 0x802BF190u && cpu->pc <= 0x802BF1B0u) {
-            return 0;
-        }
-        // When waiting for DSP mail response (0x802BF0BC or 0x802AF530 loops), acknowledge with 0x8888
+        // DSP Mailbox From DSP: return 0x8888 (with bit 15 set) to satisfy mail checks
         return (size == 4) ? 0x88880000u : 0x8888u;
     }
     // 0xCC005006 (DSP_MAIL_FROM_DSP_LO)
@@ -311,10 +303,10 @@ u64 audio_read_ai(CPUState* cpu, u32 reg_offset, u8 size) {
         return 0;
     }
 
-    // DSP Control/Status Register (0xCC00500A): bit 0 is DSP_RESET; 0 = reset complete
+    // DSP Control/Status Register (0xCC00500A): bit 0 is DSP_RESET (0 = complete), bit 5 is DSP_INIT (1 = init complete)
     if ((reg_offset & 0x0E) == 0x0A) {
         u32 idx = (reg_offset & 0x3F) >> 2;
-        return s_ai_regs[idx] & ~0x00010001u;
+        return (s_ai_regs[idx] & ~0x00010001u) | 0x00200020u;
     }
 
     // AI Control Register (AICR: 0xCC005014 / 0xCC005016): bit 0 (PSTAT) = 1 indicates active playback
@@ -349,6 +341,12 @@ void audio_write_ai(CPUState* cpu, u32 reg_offset, u64 val, u8 size) {
         // AILEN: length in 32-byte blocks
         s_ai_dma_len = ((u32)val & 0x7FFF) * 32;
 
+        static u32 s_ai_dma_count = 0;
+        if (s_ai_dma_count++ < 10 || (s_ai_dma_count % 60 == 0)) {
+            printf("[Audio DMA #%u] addr=0x%08X len=%u bytes\n", s_ai_dma_count, s_ai_dma_addr, s_ai_dma_len);
+            fflush(stdout);
+        }
+
         // If playing and we have valid samples, queue them to SDL Audio
         if (s_audio_dev != 0 && s_ai_dma_len > 0 && s_ai_dma_addr >= GC_RAM_BASE) {
             u32 ram_offset = s_ai_dma_addr - GC_RAM_BASE;
@@ -382,23 +380,26 @@ void video_present_frame(SDL_Renderer* renderer, CPUState* cpu, int window_w, in
                 pitch = (int)(std_val * 32);
             }
 
-            // If the buffer is completely empty (all zeroes), initialize to neutral YUY2 black
-            // (in YUY2, all-zero memory renders as bright solid green because U=0, V=0)
-            static u32 s_last_sanitized_addr = 0;
-            if (s_last_sanitized_addr != s_xfb_addr) {
-                bool all_zero = true;
-                for (int i = 0; i < 256; i++) {
-                    if (fb_pixels[i] != 0) { all_zero = false; break; }
+            // In YUY2, all-zero bytes (U=0, V=0) render as solid neon green.
+            // Check if buffer is completely zeroed (e.g. freshly cleared RAM after Loading).
+            // If empty, do not blit green texture over screen; leave clean black background.
+            bool has_content = false;
+            for (u32 i = 0; i < fb_size; i += 64) {
+                if (fb_pixels[i] != 0 || fb_pixels[i + 1] != 0 || fb_pixels[i + 2] != 0 || fb_pixels[i + 3] != 0) {
+                    has_content = true;
+                    break;
                 }
-                if (all_zero) {
-                    for (u32 i = 0; i < fb_size; i += 4) {
-                        fb_pixels[i + 0] = 0x00; // Y0
-                        fb_pixels[i + 1] = 0x80; // U
-                        fb_pixels[i + 2] = 0x00; // Y1
-                        fb_pixels[i + 3] = 0x80; // V
-                    }
+            }
+            if (!has_content) {
+                return;
+            }
+
+            // Sanitize any remaining unwritten / zero-chroma pixels so they render as black (U=0x80, V=0x80)
+            for (u32 i = 0; i < fb_size; i += 4) {
+                if (fb_pixels[i + 1] == 0 && fb_pixels[i + 3] == 0) {
+                    fb_pixels[i + 1] = 0x80; // neutral U
+                    fb_pixels[i + 3] = 0x80; // neutral V
                 }
-                s_last_sanitized_addr = s_xfb_addr;
             }
 
             SDL_UpdateTexture(s_xfb_texture, NULL, fb_pixels, pitch);

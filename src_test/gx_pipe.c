@@ -463,19 +463,27 @@ static SDL_Texture* get_or_create_texture(SDL_Renderer* renderer, CPUState* cpu,
 static bool is_valid_fifo_cmd(const u8* buf, u32 offset, u32 available) {
     if (available < 1) return false;
     u8 b = buf[offset % FIFO_BUFFER_SIZE];
-    if (b == 0x61) {
-        return (available >= 5);
-    }
-    if (b == 0x10) {
+    if (b == 0x00) return true; // NOP
+    if (b == 0x08) return (available >= 6); // Load CP
+    if (b == 0x10) { // Load XF
         if (available < 5) return false;
         u16 count_m1 = ((u16)buf[(offset + 1) % FIFO_BUFFER_SIZE] << 8) | buf[(offset + 2) % FIFO_BUFFER_SIZE];
         u32 total = 5 + ((u32)count_m1 + 1) * 4;
         return (available >= total);
     }
-    if (b == 0x08) {
-        return (available >= 6);
+    if (b == 0x20 || b == 0x28 || b == 0x30 || b == 0x38) { // Load Indx A/B/C/D
+        return (available >= 5);
     }
-    if ((b & 0xF8) >= 0x80 && (b & 0xF8) <= 0xB8) {
+    if (b == 0x40) { // Call Display List
+        return (available >= 9);
+    }
+    if (b == 0x48) { // Invalidate Vtx Cache
+        return true;
+    }
+    if (b == 0x61) { // Load BP
+        return (available >= 5);
+    }
+    if ((b & 0xF8) >= 0x80 && (b & 0xF8) <= 0xB8) { // Draw Primitive
         if (available < 3) return false;
         u16 count = ((u16)buf[(offset + 1) % FIFO_BUFFER_SIZE] << 8) | buf[(offset + 2) % FIFO_BUFFER_SIZE];
         return (count > 0 && count <= 1024);
@@ -483,8 +491,45 @@ static bool is_valid_fifo_cmd(const u8* buf, u32 offset, u32 available) {
     return false;
 }
 
+static void gx_pipe_process_internal(CPUState* cpu);
+
+static void gx_pipe_process_display_list(CPUState* cpu, const u8* dl_buf, u32 dl_len) {
+    if (!dl_buf || dl_len == 0) return;
+    static int s_dl_depth = 0;
+    if (s_dl_depth >= 8) return;
+    s_dl_depth++;
+
+    u32 copy_len = (dl_len < FIFO_BUFFER_SIZE) ? dl_len : FIFO_BUFFER_SIZE;
+    u8* dl_copy = (u8*)malloc(FIFO_BUFFER_SIZE);
+    if (!dl_copy) {
+        s_dl_depth--;
+        return;
+    }
+    memcpy(dl_copy, dl_buf, copy_len);
+    if (copy_len < FIFO_BUFFER_SIZE) {
+        memset(dl_copy + copy_len, 0, 32);
+    }
+
+    u8* old_buf = s_fifo_buf;
+    u32 old_tail = s_fifo_read_tail;
+    u32 old_head = s_fifo_write_head;
+
+    s_fifo_buf = dl_copy;
+    s_fifo_read_tail = 0;
+    s_fifo_write_head = copy_len;
+
+    gx_pipe_process_internal(cpu);
+
+    s_fifo_buf = old_buf;
+    s_fifo_read_tail = old_tail;
+    s_fifo_write_head = old_head;
+
+    free(dl_copy);
+    s_dl_depth--;
+}
+
 // Process pending commands in FIFO
-void gx_pipe_process_frame(CPUState* cpu) {
+static void gx_pipe_process_internal(CPUState* cpu) {
     static u32 s_bp_log_count = 0;
     static u32 s_draw_log_count = 0;
 
@@ -538,7 +583,44 @@ void gx_pipe_process_frame(CPUState* cpu) {
             continue;
         }
 
-        // 4. Load BP Register (0x61) - 5 bytes: 0x61 <u32 val>
+        // 4. Load Indx A/B/C/D (0x20, 0x28, 0x30, 0x38) - 5 bytes: opcode <u32 val>
+        if (opcode == 0x20 || opcode == 0x28 || opcode == 0x30 || opcode == 0x38) {
+            if (available < 5) break;
+            s_fifo_read_tail = (s_fifo_read_tail + 5) % FIFO_BUFFER_SIZE;
+            continue;
+        }
+
+        // 5. Call Display List (0x40) - 9 bytes: 0x40 <u32 addr> <u32 size>
+        if (opcode == 0x40) {
+            if (available < 9) break;
+            u32 dl_addr = ((u32)s_fifo_buf[(s_fifo_read_tail + 1) % FIFO_BUFFER_SIZE] << 24) |
+                          ((u32)s_fifo_buf[(s_fifo_read_tail + 2) % FIFO_BUFFER_SIZE] << 16) |
+                          ((u32)s_fifo_buf[(s_fifo_read_tail + 3) % FIFO_BUFFER_SIZE] << 8)  |
+                          s_fifo_buf[(s_fifo_read_tail + 4) % FIFO_BUFFER_SIZE];
+            u32 dl_size = ((u32)s_fifo_buf[(s_fifo_read_tail + 5) % FIFO_BUFFER_SIZE] << 24) |
+                          ((u32)s_fifo_buf[(s_fifo_read_tail + 6) % FIFO_BUFFER_SIZE] << 16) |
+                          ((u32)s_fifo_buf[(s_fifo_read_tail + 7) % FIFO_BUFFER_SIZE] << 8)  |
+                          s_fifo_buf[(s_fifo_read_tail + 8) % FIFO_BUFFER_SIZE];
+            s_fifo_read_tail = (s_fifo_read_tail + 9) % FIFO_BUFFER_SIZE;
+            static u32 s_dl_log = 0;
+            if (s_dl_log++ < 20) {
+                printf("[GX Call DL #%u] addr=0x%08X size=%u bytes\n", s_dl_log, dl_addr, dl_size);
+                fflush(stdout);
+            }
+            u32 gc_dl_addr = (dl_addr & 0x01FFFFFFu) | GC_RAM_BASE;
+            if (gc_dl_addr >= GC_RAM_BASE && (gc_dl_addr - GC_RAM_BASE + dl_size) <= cpu->ram_size && dl_size > 0 && dl_size < 1048576) {
+                gx_pipe_process_display_list(cpu, cpu->ram + (gc_dl_addr - GC_RAM_BASE), dl_size);
+            }
+            continue;
+        }
+
+        // 6. Invalidate Vertex Cache (0x48) - 1 byte
+        if (opcode == 0x48) {
+            s_fifo_read_tail = (s_fifo_read_tail + 1) % FIFO_BUFFER_SIZE;
+            continue;
+        }
+
+        // 7. Load BP Register (0x61) - 5 bytes: 0x61 <u32 val>
         if (opcode == 0x61) {
             if (available < 5) break;
             s_fifo_read_tail = (s_fifo_read_tail + 1) % FIFO_BUFFER_SIZE;
@@ -958,6 +1040,11 @@ void gx_pipe_process_frame(CPUState* cpu) {
         // Unknown byte: advance by 1
         s_fifo_read_tail = (s_fifo_read_tail + 1) % FIFO_BUFFER_SIZE;
     }
+}
+
+// Flushes and processes any pending commands in the FIFO
+void gx_pipe_process_frame(CPUState* cpu) {
+    gx_pipe_process_internal(cpu);
 
     // Keep read pointer in sync with write pointer
     s_cp_read_ptr = s_cp_write_ptr;
@@ -1067,39 +1154,94 @@ void gx_pipe_render_to_sdl(SDL_Renderer* renderer, CPUState* cpu, int game_x, in
                 }
             }
         }
-        // Triangles (0x88)
-        else if (qd->prim_type == 0x88) {
-            u32 num_tris = count / 3;
-            for (u32 t = 0; t < num_tris; t++) {
-                if (batch_count > 0 && (current_tex != tex || batch_count + 3 > MAX_BATCH_VERTS)) {
-                    SDL_RenderGeometry(renderer, current_tex, s_batch_verts, batch_count, NULL, 0);
-                    batch_count = 0;
-                }
-                current_tex = tex;
-
-                for (int i = 0; i < 3; i++) {
-                    QueuedVertex* qv = &s_queued_vertices[start + t * 3 + i];
-                    SDL_Vertex* v = &s_batch_verts[batch_count++];
-                    v->position.x = (float)game_x + (qv->x / 640.0f) * (float)game_w;
-                    v->position.y = (float)game_y + (qv->y / 480.0f) * (float)game_h;
-                    if (tex) {
-                        v->color.r = 255;
-                        v->color.g = 255;
-                        v->color.b = 255;
-                        v->color.a = 255;
-                    } else {
-                        v->color.r = qv->r;
-                        v->color.g = qv->g;
-                        v->color.b = qv->b;
-                        v->color.a = qv->a;
+        // Triangles (0x90 or 0x88): discrete triangles if divisible by 3, or triangle strip fallback
+        else if (qd->prim_type == 0x90 || qd->prim_type == 0x88) {
+            if ((count % 3) == 0) {
+                u32 num_tris = count / 3;
+                for (u32 t = 0; t < num_tris; t++) {
+                    if (batch_count > 0 && (current_tex != tex || batch_count + 3 > MAX_BATCH_VERTS)) {
+                        SDL_RenderGeometry(renderer, current_tex, s_batch_verts, batch_count, NULL, 0);
+                        batch_count = 0;
                     }
-                    v->tex_coord.x = qv->u;
-                    v->tex_coord.y = qv->v;
+                    current_tex = tex;
+
+                    for (int i = 0; i < 3; i++) {
+                        QueuedVertex* qv = &s_queued_vertices[start + t * 3 + i];
+                        SDL_Vertex* v = &s_batch_verts[batch_count++];
+                        v->position.x = (float)game_x + (qv->x / 640.0f) * (float)game_w;
+                        v->position.y = (float)game_y + (qv->y / 480.0f) * (float)game_h;
+                        if (tex) {
+                            v->color.r = 255;
+                            v->color.g = 255;
+                            v->color.b = 255;
+                            v->color.a = 255;
+                        } else {
+                            v->color.r = qv->r;
+                            v->color.g = qv->g;
+                            v->color.b = qv->b;
+                            v->color.a = qv->a;
+                        }
+                        v->tex_coord.x = qv->u;
+                        v->tex_coord.y = qv->v;
+                    }
+                }
+            } else {
+                for (u32 i = 2; i < count; i++) {
+                    QueuedVertex* v0;
+                    QueuedVertex* v1;
+                    QueuedVertex* v2 = &s_queued_vertices[start + i];
+
+                    if (i % 2 == 0) {
+                        v0 = &s_queued_vertices[start + i - 2];
+                        v1 = &s_queued_vertices[start + i - 1];
+                    } else {
+                        v0 = &s_queued_vertices[start + i - 1];
+                        v1 = &s_queued_vertices[start + i - 2];
+                    }
+
+                    float px0 = v0->x, py0 = v0->y;
+                    float px1 = v1->x, py1 = v1->y;
+                    float px2 = v2->x, py2 = v2->y;
+
+                    if ((fabsf(px0 - px1) < 0.001f && fabsf(py0 - py1) < 0.001f) ||
+                        (fabsf(px1 - px2) < 0.001f && fabsf(py1 - py2) < 0.001f) ||
+                        (fabsf(px0 - px2) < 0.001f && fabsf(py0 - py2) < 0.001f)) {
+                        continue;
+                    }
+
+                    float area = fabsf((px1 - px0) * (py2 - py0) - (py1 - py0) * (px2 - px0));
+                    if (area < 0.01f) continue;
+
+                    if (batch_count > 0 && (current_tex != tex || batch_count + 3 > MAX_BATCH_VERTS)) {
+                        SDL_RenderGeometry(renderer, current_tex, s_batch_verts, batch_count, NULL, 0);
+                        batch_count = 0;
+                    }
+                    current_tex = tex;
+
+                    QueuedVertex* qverts[3] = { v0, v1, v2 };
+                    for (int k = 0; k < 3; k++) {
+                        SDL_Vertex* v = &s_batch_verts[batch_count++];
+                        v->position.x = (float)game_x + (qverts[k]->x / 640.0f) * (float)game_w;
+                        v->position.y = (float)game_y + (qverts[k]->y / 480.0f) * (float)game_h;
+                        if (tex) {
+                            v->color.r = 255;
+                            v->color.g = 255;
+                            v->color.b = 255;
+                            v->color.a = 255;
+                        } else {
+                            v->color.r = qverts[k]->r;
+                            v->color.g = qverts[k]->g;
+                            v->color.b = qverts[k]->b;
+                            v->color.a = qverts[k]->a;
+                        }
+                        v->tex_coord.x = qverts[k]->u;
+                        v->tex_coord.y = qverts[k]->v;
+                    }
                 }
             }
         }
-        // Triangle Strip (0x90)
-        else if (qd->prim_type == 0x90) {
+        // Triangle Strip (0x98 or 0x90 fallback)
+        else if (qd->prim_type == 0x98) {
             for (u32 i = 2; i < count; i++) {
                 QueuedVertex* v0;
                 QueuedVertex* v1;
@@ -1131,16 +1273,6 @@ void gx_pipe_render_to_sdl(SDL_Renderer* renderer, CPUState* cpu, int game_x, in
                     continue; // Skip zero-area triangle
                 }
 
-                // Discard triangle strip bridges between distant glyphs / words / carriage returns
-                if (tex != NULL) {
-                    float d01_x = fabsf(px0 - px1), d12_x = fabsf(px1 - px2), d02_x = fabsf(px0 - px2);
-                    float d01_y = fabsf(py0 - py1), d12_y = fabsf(py1 - py2), d02_y = fabsf(py0 - py2);
-                    if (d01_x > 60.0f || d12_x > 60.0f || d02_x > 60.0f ||
-                        d01_y > 60.0f || d12_y > 60.0f || d02_y > 60.0f) {
-                        continue;
-                    }
-                }
-
                 if (batch_count > 0 && (current_tex != tex || batch_count + 3 > MAX_BATCH_VERTS)) {
                     SDL_RenderGeometry(renderer, current_tex, s_batch_verts, batch_count, NULL, 0);
                     batch_count = 0;
@@ -1152,17 +1284,24 @@ void gx_pipe_render_to_sdl(SDL_Renderer* renderer, CPUState* cpu, int game_x, in
                     SDL_Vertex* v = &s_batch_verts[batch_count++];
                     v->position.x = (float)game_x + (qverts[k]->x / 640.0f) * (float)game_w;
                     v->position.y = (float)game_y + (qverts[k]->y / 480.0f) * (float)game_h;
-                    v->color.r = qverts[k]->r;
-                    v->color.g = qverts[k]->g;
-                    v->color.b = qverts[k]->b;
-                    v->color.a = qverts[k]->a;
+                    if (tex) {
+                        v->color.r = 255;
+                        v->color.g = 255;
+                        v->color.b = 255;
+                        v->color.a = 255;
+                    } else {
+                        v->color.r = qverts[k]->r;
+                        v->color.g = qverts[k]->g;
+                        v->color.b = qverts[k]->b;
+                        v->color.a = qverts[k]->a;
+                    }
                     v->tex_coord.x = qverts[k]->u;
                     v->tex_coord.y = qverts[k]->v;
                 }
             }
         }
-        // Triangle Fan (0x98)
-        else if (qd->prim_type == 0x98) {
+        // Triangle Fan (0xA0 or legacy 0x98)
+        else if (qd->prim_type == 0xA0) {
             for (u32 i = 1; i + 1 < count; i++) {
                 QueuedVertex* v0 = &s_queued_vertices[start];
                 QueuedVertex* v1 = &s_queued_vertices[start + i];
@@ -1192,10 +1331,17 @@ void gx_pipe_render_to_sdl(SDL_Renderer* renderer, CPUState* cpu, int game_x, in
                     SDL_Vertex* v = &s_batch_verts[batch_count++];
                     v->position.x = (float)game_x + (qverts[k]->x / 640.0f) * (float)game_w;
                     v->position.y = (float)game_y + (qverts[k]->y / 480.0f) * (float)game_h;
-                    v->color.r = qverts[k]->r;
-                    v->color.g = qverts[k]->g;
-                    v->color.b = qverts[k]->b;
-                    v->color.a = qverts[k]->a;
+                    if (tex) {
+                        v->color.r = 255;
+                        v->color.g = 255;
+                        v->color.b = 255;
+                        v->color.a = 255;
+                    } else {
+                        v->color.r = qverts[k]->r;
+                        v->color.g = qverts[k]->g;
+                        v->color.b = qverts[k]->b;
+                        v->color.a = qverts[k]->a;
+                    }
                     v->tex_coord.x = qverts[k]->u;
                     v->tex_coord.y = qverts[k]->v;
                 }
