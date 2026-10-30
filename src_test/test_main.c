@@ -746,14 +746,16 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
         static u32 s_last_state = 0xFFFFFFFFu;
         u32 st = (scn >= GC_RAM_BASE) ? mem_read32(ctx, scn + 8) : 0;
 
-        // Se o usuario ja confirmou o dialogo, limpa o Fader travado em 3 (preto) e destrava flags
-        if (s_user_confirmed_dlg && scn >= GC_RAM_BASE) {
+        // Desbloqueia o fader travado em status 3 (tela preta) para que o dialogo e o jogo fiquem sempre visiveis
+        if (scn >= GC_RAM_BASE) {
             u32 fader = mem_read32(ctx, scn + 4);
             if (fader >= GC_RAM_BASE && (fader - GC_RAM_BASE + 32) <= ctx->ram_size) {
-                mem_write32(ctx, fader + 16, 0); // Forca Fader para 0 (claro / inativo)
-                mem_write32(ctx, fader + 20, f32_to_u32_bits(0.0f)); // Alpha do fade = 0.0f
+                u32 fst = mem_read32(ctx, fader + 16);
+                if (fst == 3) {
+                    mem_write32(ctx, fader + 16, 0); // Forca Fader para 0 (claro / inativo)
+                    mem_write32(ctx, fader + 20, f32_to_u32_bits(0.0f)); // Alpha do fade = 0.0f
+                }
             }
-            /* active_dlg is closed by native callback, do not zero prematurely */
         }
 
         if (s_ac614_cnt++ % 60 == 0 || st != s_last_state || s_user_confirmed_dlg) {
@@ -819,7 +821,7 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
     // Fader isBusy check (0x8009B3C4):
     if (address == 0x8009B3C4u) {
         u32 fader = ctx->gpr[3];
-        if (s_user_confirmed_dlg && fader >= GC_RAM_BASE && (fader - GC_RAM_BASE + 24) <= ctx->ram_size) {
+        if (fader >= GC_RAM_BASE && (fader - GC_RAM_BASE + 24) <= ctx->ram_size) {
             mem_write32(ctx, fader + 16, 0); // Desbloqueia fader preso em status 3
             mem_write32(ctx, fader + 20, f32_to_u32_bits(0.0f));
         }
@@ -835,12 +837,9 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
             ctx->pc = ctx->lr;
             return 1;
         }
-        if (ctx->lr == 0x801AC8A0u || s_user_confirmed_dlg) {
-            ctx->gpr[3] = 0; // Fader not busy!
-            ctx->pc = ctx->lr;
-            return 1;
-        }
-        return 0;
+        ctx->gpr[3] = 0; // Fader not busy!
+        ctx->pc = ctx->lr;
+        return 1;
     }
     // Scene canTransition check (0x801B1564):
     if (address == 0x801B1564u) {
@@ -850,12 +849,9 @@ int dolrecomp_dispatch_replacement(CPUState* ctx, u32 address) {
                    s_b1564_cnt, ctx->gpr[3], ctx->lr);
             fflush(stdout);
         }
-        if (ctx->lr == 0x801AD4C0u || s_user_confirmed_dlg) {
-            ctx->gpr[3] = 0;
-            ctx->pc = ctx->lr;
-            return 1;
-        }
-        return 0;
+        ctx->gpr[3] = 0;
+        ctx->pc = ctx->lr;
+        return 1;
     }
     // Scene Case 2 (Title Screen Setup 0x801AD25C)
     if (address == 0x801AD25Cu) {
@@ -1520,6 +1516,11 @@ int main(int argc, char** argv) {
             fflush(stdout);
         }
         s_last_logged_button = p0->button;
+
+        // Permite que qualquer botao real (Controle fisico ou Teclado) confirme dialogos
+        if (p0->button & (PAD_BUTTON_A | PAD_BUTTON_START | PAD_BUTTON_B | PAD_BUTTON_X)) {
+            s_user_confirmed_dlg = true;
+        }
 
         // Controller 0 State synchronization (0x8038C1BC)
         u32 pad0_base = 0x8038C1BCu;
