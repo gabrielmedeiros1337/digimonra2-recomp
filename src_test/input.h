@@ -38,6 +38,7 @@ bool input_init(void);
 
 // Polls keyboard and connected controllers, updating current pad state
 void input_poll(void);
+void input_suppress_enter(void);
 void input_handle_event(const SDL_Event* event);
 const NativePadState* input_get_pad(int idx);
 void input_bind_frame(const NativePadState* physical_snapshot);

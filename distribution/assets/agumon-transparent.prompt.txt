@@ -1,0 +1,3 @@
+Tool: built-in image_gen (edit, transparent_background=true)
+Source: agumon.jpg supplied by the user
+Prompt: Edit target: the provided Agumon image. Use case: background-extraction. Remove only the white background and replace it with true alpha transparency. Preserve exactly the single existing yellow Agumon character, its full body silhouette, pose, face, eye, teeth, claws, colors, shading, proportions and low-poly game-render style. Keep white teeth and claws opaque. Do not add text, shadows, scenery, extra objects, or redraw/restyle the character. Deliver a clean transparent PNG cutout with no white matte or white halo, keeping the full character uncropped for embedding into a dark desktop launcher.

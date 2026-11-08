@@ -1,6 +1,7 @@
 {
   "version": 1,
   "vsync": false,
+  "window_mode": 0,
   "image_path": "",
   "keyboard_enabled": true,
   "keyboard_port": 0,

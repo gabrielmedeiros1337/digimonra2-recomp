@@ -66,3 +66,12 @@ Opções: VSync opcional (OFF por padrão, aplicado na próxima abertura).
 FreeSync/VRR permanece sob controle do monitor/driver; o jogo continua a 60 FPS.
 FSR não está implementado e aparece explicitamente como indisponível.
 Créditos: agradecimento, Agumon e link clicável para o repositório.
+
+MODO DE TELA / ALT+ENTER
+Na aba Opções, escolha Janela (padrão), Tela cheia sem bordas ou Tela cheia
+exclusiva. A escolha de início é aplicada na próxima execução.
+Alt+Enter alterna entre janela e o modo de tela cheia escolhido; a janela
+recupera seu tamanho anterior. Se iniciar em Janela, o atalho usa sem bordas.
+A tela cheia exclusiva usa a resolução e frequência atuais do monitor.
+FreeSync depende do suporte/configuração do monitor, GPU e driver; selecionar
+um modo de tela no launcher não habilita FreeSync por conta própria.

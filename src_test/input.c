@@ -7,6 +7,8 @@
 static NativePadState s_pads[4];
 static u32 s_si_regs[16];
 static LauncherConfig s_config;
+static bool s_suppress_enter;
+void input_suppress_enter(void){s_suppress_enter=true;}
 static SDL_GameController* s_controllers[4];
 static SDL_Joystick* s_joysticks[4];
 void input_configure(const LauncherConfig* c){s_config=*c;}
@@ -85,8 +87,17 @@ void input_apply_keyboard(const Uint8* state,bool focused,const LauncherConfig* 
  pad->substick_x=(s8)(100*((int)on[19]-(int)on[18]));pad->substick_y=(s8)(100*((int)on[16]-(int)on[17]));
  if(on[12])pad->button|=PAD_BUTTON_UP;if(on[13])pad->button|=PAD_BUTTON_DOWN;if(on[14])pad->button|=PAD_BUTTON_LEFT;if(on[15])pad->button|=PAD_BUTTON_RIGHT;
 }
-void input_poll(void){memset(s_pads,0,sizeof(s_pads));for(int i=0;i<4;i++)poll_controller(i);input_apply_keyboard(SDL_GetKeyboardState(NULL),SDL_GetKeyboardFocus()!=NULL,&s_config,s_pads);}
-void input_handle_event(const SDL_Event* event){if(event->type==SDL_JOYDEVICEADDED||event->type==SDL_JOYDEVICEREMOVED)open_devices();}
+void input_poll(void){
+ memset(s_pads,0,sizeof(s_pads));for(int i=0;i<4;i++)poll_controller(i);
+ const Uint8* keys=SDL_GetKeyboardState(NULL);
+ if(s_suppress_enter&&(keys[SDL_SCANCODE_RETURN]||keys[SDL_SCANCODE_KP_ENTER])){
+  {Uint8 filtered[SDL_NUM_SCANCODES];memcpy(filtered,keys,sizeof(filtered));filtered[SDL_SCANCODE_RETURN]=filtered[SDL_SCANCODE_KP_ENTER]=0;input_apply_keyboard(filtered,SDL_GetKeyboardFocus()!=NULL,&s_config,s_pads);return;}
+ }
+ input_apply_keyboard(keys,SDL_GetKeyboardFocus()!=NULL,&s_config,s_pads);
+}
+void input_handle_event(const SDL_Event* event){
+ if((event->type==SDL_KEYUP||(event->type==SDL_KEYDOWN&&!event->key.repeat&&!(event->key.keysym.mod&KMOD_ALT)))&&(event->key.keysym.sym==SDLK_RETURN||event->key.keysym.sym==SDLK_KP_ENTER))s_suppress_enter=false;
+ if(event->type==SDL_JOYDEVICEADDED||event->type==SDL_JOYDEVICEREMOVED)open_devices();}
 #ifdef _MSC_VER
 static __declspec(thread) const NativePadState* s_frame_pads;
 #else

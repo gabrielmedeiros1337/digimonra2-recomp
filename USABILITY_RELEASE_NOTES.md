@@ -197,3 +197,24 @@ A opção JSON `vsync` é um booleano opcional: configurações anteriores conti
 válidas e usam OFF. Ao iniciar o core, apenas a solicitação inicial de VSync
 SDL/OpenGL recebe esse valor. O orçamento, pacer e limite guest de 60 FPS não
 são alterados. FSR aparece como indisponível: não há shader FSR no backend.
+
+## Transparência e modos de tela
+
+O recorte `distribution/assets/agumon-transparent.png` tem alpha RGBA real,
+incorporado como RCDATA. O painel branco atrás da imagem foi removido; GDI+
+compõe o PNG sobre o tema escuro. O original JPG foi preservado. O prompt e
+método de edição ficam no arquivo `.prompt.txt` ao lado do PNG.
+
+`window_mode` é um inteiro opcional no JSON: 0=janela (padrão e migração),
+1=sem bordas desktop, 2=exclusiva. `display_mode.c` mantém as coordenadas e o
+tamanho de janela, usa SDL_WINDOW_FULLSCREEN_DESKTOP ou SDL_WINDOW_FULLSCREEN
+conforme a escolha, e seleciona o modo atual do monitor para exclusiva.
+Alt+Enter é tratado nas duas bombas de eventos da thread principal, ignora
+repetição e alterna para janela/restaura o último modo de tela cheia. Iniciar
+em janela define sem bordas como destino inicial do atalho.
+O Enter desse atalho é suprimido no PAD até ser solto; não confirma prompts.
+Não foram alterados chunks, GX, orçamento, pacer ou filas de renderização.
+
+Validação: 23/23 CTest, incluindo transições SDL janela/sem bordas/exclusiva,
+restauração de dimensões, repetição do atalho e configurações legadas sem
+`window_mode`. O monitor/driver continua responsável pelo suporte a FreeSync.

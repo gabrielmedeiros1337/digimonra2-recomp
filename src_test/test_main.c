@@ -20,6 +20,7 @@
 #include "dvd_vfs.h"
 #include "video_audio.h"
 #include "input.h"
+#include "display_mode.h"
 #include "gx_pipe.h"
 #include "gx_gl.h"
 #include "hle_callbacks.h"
@@ -1101,6 +1102,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    DisplayModeState display_mode;
+    display_mode_init(&display_mode,launch_config.window_mode);
+    if(!display_mode_apply(window,&display_mode,launch_config.window_mode)){
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING,"Modo de tela",SDL_GetError(),window);
+        display_mode_apply(window,&display_mode,DISPLAY_WINDOWED);
+    }
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
     if (!renderer) {
@@ -1218,6 +1225,7 @@ int main(int argc, char** argv) {
 
         // Poll OS events
         while (SDL_PollEvent(&event)) {
+            if(display_mode_event(window,&display_mode,&event)){input_suppress_enter();continue;}
             if (event.type == SDL_QUIT) {
                 printf("[Exit] SDL_QUIT received\n");
                 running = false;
@@ -1270,6 +1278,7 @@ int main(int argc, char** argv) {
             while(!cpu_frame_done()){
                 gx_frame_pump(true);
                 while(SDL_PollEvent(&event)){
+                    if(display_mode_event(window,&display_mode,&event)){input_suppress_enter();continue;}
                     if(event.type==SDL_QUIT || (event.type==SDL_KEYDOWN && event.key.keysym.sym==SDLK_ESCAPE)){running=false;cpu_frame_cancel();}
                     input_handle_event(&event);
                 }
