@@ -1,0 +1,110 @@
+#include "gx_frame.h"
+#include "frame_timing.h"
+#include <stdlib.h>
+#include <string.h>
+enum {FREE,BUILDING,READY,EXECUTING};
+typedef struct {u8* bytes;u32 used,capacity,state;u64 ticket,generation;} Slot;
+static struct {
+    bool active;SDL_threadID owner;SDL_mutex* lock;SDL_sem* ready;SDL_cond* changed;
+    GXFrameExecute execute;GXFrameReport report;void* user;
+    Slot slots[GX_FRAME_ARENAS];u32 building;u64 issued,completed,wait_ticks,generation;bool failed;
+    GXFrameStats stats;
+} s;
+#ifdef _MSC_VER
+static __declspec(thread) bool worker;
+#else
+static _Thread_local bool worker;
+#endif
+bool gx_frame_consuming(void){return worker;}
+bool gx_frame_active(void){return s.active;}
+void gx_frame_wake(void){if(s.active)SDL_SemPost(s.ready);}
+bool gx_frame_pump(bool wait){
+    if(!s.active || SDL_ThreadID()!=s.owner)return false;
+    if(wait)SDL_SemWaitTimeout(s.ready,1);else SDL_SemTryWait(s.ready);
+    SDL_LockMutex(s.lock);Slot* slot=NULL;
+    for(u32 i=0;i<GX_FRAME_ARENAS;i++)if(s.slots[i].state==READY && (!slot || s.slots[i].ticket<slot->ticket))slot=s.slots+i;
+    if(!slot){SDL_UnlockMutex(s.lock);return false;}
+    slot->state=EXECUTING;SDL_UnlockMutex(s.lock);
+    worker=true;bool previous=frame_timing_worker(true);u64 start=SDL_GetPerformanceCounter();
+    bool ok=s.execute(slot->bytes,slot->used,s.user);u64 elapsed=SDL_GetPerformanceCounter()-start;
+    SDL_LockMutex(s.lock);if(!ok)s.failed=true;s.stats.packets++;s.stats.bytes+=slot->used;s.stats.worker_ticks+=elapsed;
+    if(s.report)s.report(&s.stats);s.completed=slot->ticket;slot->used=0;slot->state=FREE;SDL_CondBroadcast(s.changed);SDL_UnlockMutex(s.lock);
+    frame_timing_worker(previous);worker=false;return true;
+}
+bool gx_frame_start(GXFrameExecute execute,GXFrameReport report,void* user){
+    if(s.active || !execute)return false;
+    memset(&s,0,sizeof(s));s.building=GX_FRAME_ARENAS;s.execute=execute;s.report=report;s.user=user;s.owner=SDL_ThreadID();
+    s.lock=SDL_CreateMutex();s.ready=SDL_CreateSemaphore(0);s.changed=SDL_CreateCond();
+    if(!s.lock || !s.ready || !s.changed){if(s.lock)SDL_DestroyMutex(s.lock);if(s.ready)SDL_DestroySemaphore(s.ready);if(s.changed)SDL_DestroyCond(s.changed);memset(&s,0,sizeof(s));return false;}
+    if(s.report)s.report(&s.stats);s.active=true;return true;
+}
+static Slot* acquire(void){
+    bool blocked=false;
+    SDL_LockMutex(s.lock);
+    for(;;){
+        if(s.failed){SDL_UnlockMutex(s.lock);return NULL;}
+        for(u32 i=0;i<GX_FRAME_ARENAS;i++)if(s.slots[i].state==FREE){s.slots[i].state=BUILDING;s.slots[i].used=0;s.slots[i].generation=++s.generation;s.building=i;SDL_UnlockMutex(s.lock);return s.slots+i;}
+        if(!blocked){s.stats.pressure_waits++;blocked=true;}u64 at=SDL_GetPerformanceCounter();
+        if(SDL_ThreadID()==s.owner){SDL_UnlockMutex(s.lock);gx_frame_pump(true);SDL_LockMutex(s.lock);}else SDL_CondWait(s.changed,s.lock);
+        u64 elapsed=SDL_GetPerformanceCounter()-at;s.wait_ticks+=elapsed;s.stats.pressure_ticks+=elapsed;
+    }
+}
+void* gx_frame_alloc(u32 bytes){
+    if(!s.active || !bytes || bytes>64u*1024u*1024u-15)return NULL;bytes=(bytes+15u)&~15u;
+    Slot* slot=s.building<GX_FRAME_ARENAS ? s.slots+s.building:acquire();if(!slot)return NULL;
+    if(bytes>64u*1024u*1024u-slot->used){if(!gx_frame_submit(false))return NULL;slot=acquire();if(!slot)return NULL;}
+    u32 needed=slot->used+bytes;
+    if(needed>slot->capacity){u32 capacity=slot->capacity ? slot->capacity:1048576u;while(capacity<needed)capacity*=2;
+        u8* storage=realloc(slot->bytes,capacity);if(!storage)return NULL;slot->bytes=storage;slot->capacity=capacity;}
+    void* result=slot->bytes+slot->used;slot->used+=bytes;return result;
+}
+bool gx_frame_submit(bool wait){
+    if(!s.active)return true;
+    SDL_LockMutex(s.lock);
+    if(s.building<GX_FRAME_ARENAS){Slot* slot=s.slots+s.building;if(slot->used){slot->ticket=++s.issued;slot->state=READY;SDL_SemPost(s.ready);}else slot->state=FREE;s.building=GX_FRAME_ARENAS;}
+    u64 target=s.issued;
+    if(wait){s.stats.barrier_calls++;if(s.completed<target)s.stats.barrier_waits++;}
+    while(wait && s.completed<target && !s.failed){u64 at=SDL_GetPerformanceCounter();
+        if(SDL_ThreadID()==s.owner){SDL_UnlockMutex(s.lock);gx_frame_pump(true);SDL_LockMutex(s.lock);}else SDL_CondWait(s.changed,s.lock);
+        u64 elapsed=SDL_GetPerformanceCounter()-at;s.wait_ticks+=elapsed;s.stats.barrier_ticks+=elapsed;}
+    bool ok=!s.failed;SDL_UnlockMutex(s.lock);return ok;
+}
+bool gx_frame_drain(void){return gx_frame_submit(true);}
+bool gx_frame_submit_pe(void){
+    if(!s.active)return true;
+    if(!gx_frame_submit(false))return false;
+    SDL_LockMutex(s.lock);s.stats.pe_submits++;SDL_UnlockMutex(s.lock);return true;
+}
+void gx_frame_fail(void){if(s.active){SDL_LockMutex(s.lock);s.failed=true;SDL_CondBroadcast(s.changed);SDL_UnlockMutex(s.lock);}}
+void gx_frame_frame_queued(void){if(s.active){SDL_LockMutex(s.lock);s.stats.frames_queued++;SDL_UnlockMutex(s.lock);}}
+void gx_frame_presented(void){if(s.active){SDL_LockMutex(s.lock);s.stats.frames_presented++;SDL_UnlockMutex(s.lock);}}
+bool gx_frame_begin_cpu_frame(void){
+    if(!s.active)return true;
+    if(SDL_ThreadID()!=s.owner)return false;
+    // CPU N+1 may overlap render N, but CPU N+2 cannot overtake present N.
+    // This is frame-queue backpressure, never a PE or VRAM-copy completion wait.
+    for(;;){
+        SDL_LockMutex(s.lock);bool ok=!s.failed,full=s.stats.frames_queued>s.stats.frames_presented+1;SDL_UnlockMutex(s.lock);
+        if(!ok || !full)return ok;
+        u64 at=SDL_GetPerformanceCounter();gx_frame_pump(true);
+        SDL_LockMutex(s.lock);s.stats.frame_limit_ticks+=SDL_GetPerformanceCounter()-at;SDL_UnlockMutex(s.lock);
+    }
+}
+void gx_frame_stats(GXFrameStats* result){
+    if(!s.active){memset(result,0,sizeof(*result));return;}
+    SDL_LockMutex(s.lock);*result=s.stats;result->wait_ticks=s.wait_ticks;SDL_UnlockMutex(s.lock);
+}
+bool gx_frame_stop(void){
+    if(!s.active)return true;bool ok=gx_frame_drain();
+    for(u32 i=0;i<GX_FRAME_ARENAS;i++)free(s.slots[i].bytes);
+    SDL_DestroyCond(s.changed);SDL_DestroySemaphore(s.ready);SDL_DestroyMutex(s.lock);memset(&s,0,sizeof(s));return ok;
+}
+
+u64 gx_frame_builder(u8** base,u32* used){
+    if(!s.active || s.building>=GX_FRAME_ARENAS)return 0;
+    Slot* slot=s.slots+s.building;*base=slot->bytes;*used=slot->used;return slot->generation;
+}
+bool gx_frame_trim(u32 bytes){
+    if(!s.active || s.building>=GX_FRAME_ARENAS)return false;
+    Slot* slot=s.slots+s.building;if(bytes>slot->used)return false;slot->used-=bytes;return true;
+}

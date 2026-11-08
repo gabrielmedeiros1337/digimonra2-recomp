@@ -14,6 +14,7 @@
 static inline void write_u32_be(u8* ram, u32 ea, u32 val) {
     u32 offset = ea - GC_RAM_BASE;
     u32 swapped = BSWAP32(val);
+    ppc_mark_host_write(ram+offset,4);
     memcpy(ram + offset, &swapped, 4);
 }
 
@@ -68,12 +69,27 @@ bool dol_load(const char* dol_path, CPUState* cpu, DolMetadata* meta_out) {
     printf("[DOL Loader] Entry point: 0x%08X\n", entry_point);
     printf("[DOL Loader] BSS: 0x%08X (tamanho: %u bytes)\n", bss_addr, bss_size);
 
+    // Validate every section before mutating guest RAM; truncated input is fatal.
+    if (entry_point < GC_RAM_BASE || entry_point - GC_RAM_BASE >= cpu->ram_size ||
+        (bss_size && (bss_addr < GC_RAM_BASE || bss_addr - GC_RAM_BASE > cpu->ram_size ||
+                      bss_size > cpu->ram_size - (bss_addr - GC_RAM_BASE)))) {
+        fclose(f); return false;
+    }
+    for (int i = 0; i < 18; i++) {
+        u32 addr = i < 7 ? text_addrs[i] : data_addrs[i - 7];
+        u32 size = i < 7 ? text_sizes[i] : data_sizes[i - 7];
+        if (size && (addr < GC_RAM_BASE || addr - GC_RAM_BASE > cpu->ram_size ||
+                     size > cpu->ram_size - (addr - GC_RAM_BASE))) {
+            fclose(f); return false;
+        }
+    }
     u32 highest_addr = 0;
 
     // Clear BSS section in RAM first (per Dolphin/GameCube IPL DOL bootloader specification)
     if (bss_size > 0 && bss_addr >= GC_RAM_BASE) {
         u32 bss_offset = bss_addr - GC_RAM_BASE;
         if (bss_offset + bss_size <= cpu->ram_size) {
+            ppc_mark_host_write(cpu->ram+bss_offset,bss_size);
             memset(cpu->ram + bss_offset, 0, bss_size);
             printf("  -> BSS zerada: 0x%08X - 0x%08X (%u bytes)\n", bss_addr, bss_addr + bss_size, bss_size);
             if (bss_addr + bss_size > highest_addr) highest_addr = bss_addr + bss_size;
@@ -88,8 +104,10 @@ bool dol_load(const char* dol_path, CPUState* cpu, DolMetadata* meta_out) {
             u32 off = text_offsets[i];
             if (ea >= GC_RAM_BASE && (ea + sz) <= (GC_RAM_BASE + cpu->ram_size)) {
                 u32 ram_offset = ea - GC_RAM_BASE;
-                fseek(f, off, SEEK_SET);
-                if (fread(cpu->ram + ram_offset, 1, sz, f) == sz) {
+                if (fseek(f, off, SEEK_SET) != 0) { fclose(f); return false; }
+                ppc_mark_host_write(cpu->ram+ram_offset,sz);
+            if (fread(cpu->ram + ram_offset, 1, sz, f) != sz) { fclose(f); return false; }
+                {
                     printf("  -> Carregada .text%d: 0x%08X - 0x%08X (%u bytes)\n", i, ea, ea + sz, sz);
                     if (ea + sz > highest_addr) highest_addr = ea + sz;
                 }
@@ -105,8 +123,10 @@ bool dol_load(const char* dol_path, CPUState* cpu, DolMetadata* meta_out) {
             u32 off = data_offsets[i];
             if (ea >= GC_RAM_BASE && (ea + sz) <= (GC_RAM_BASE + cpu->ram_size)) {
                 u32 ram_offset = ea - GC_RAM_BASE;
-                fseek(f, off, SEEK_SET);
-                if (fread(cpu->ram + ram_offset, 1, sz, f) == sz) {
+                if (fseek(f, off, SEEK_SET) != 0) { fclose(f); return false; }
+                ppc_mark_host_write(cpu->ram+ram_offset,sz);
+            if (fread(cpu->ram + ram_offset, 1, sz, f) != sz) { fclose(f); return false; }
+                {
                     printf("  -> Carregada .data%d: 0x%08X - 0x%08X (%u bytes)\n", i, ea, ea + sz, sz);
                     if (ea + sz > highest_addr) highest_addr = ea + sz;
                 }
@@ -130,8 +150,6 @@ bool dol_load(const char* dol_path, CPUState* cpu, DolMetadata* meta_out) {
     write_u32_be(cpu->ram, 0x8000002C, 2);              // OSConsoleType = Dev/Retail Board
     write_u32_be(cpu->ram, 0x80000030, arena_lo);       // ArenaLo
     write_u32_be(cpu->ram, 0x80000034, arena_hi);       // ArenaHi
-    write_u32_be(cpu->ram, 0x800000E4, 162000000);      // OSBusClock = 162 MHz
-    write_u32_be(cpu->ram, 0x800000E8, 486000000);      // OSCoreClock = 486 MHz
     write_u32_be(cpu->ram, 0x800000F8, 162000000);      // BusClock
     write_u32_be(cpu->ram, 0x800000FC, 486000000);      // CoreClock
 

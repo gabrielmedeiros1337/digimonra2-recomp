@@ -12,6 +12,8 @@ from collections import defaultdict
 DUMPBIN = r"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\bin\Hostx64\x64\dumpbin.exe"
 OBJ_DIR = r"build_test\digimon_test.dir\Release"
 REPORT  = "symbol_inventory_report.txt"
+LINK_MAP = r"build_test\Release\digimon_test.map"
+EXECUTABLE = r"build_test\Release\digimon_test.exe"
 
 def run_dumpbin(obj_path):
     try:
@@ -24,6 +26,7 @@ def run_dumpbin(obj_path):
         return f"ERROR: {e}"
 
 def categorize(name):
+    if name.startswith('__imp_'): return categorize(name[6:])
     if re.match(r'^func_[89][0-9A-Fa-f]{7}$', name): return "GENERATED_FUNC"
     if re.match(r'^lbl_[89][0-9A-Fa-f]{7}$', name):  return "GENERATED_LABEL"
     if re.match(r'^loop_[89][0-9A-Fa-f]{7}$', name): return "GENERATED_LOOP"
@@ -51,11 +54,13 @@ def main():
     defined   = defaultdict(list)
     # undefined[name] = list of modules referencing it
     undefined = defaultdict(list)
+    opaque = []
 
     for obj_name in sorted(objs):
         obj_path = os.path.join(OBJ_DIR, obj_name)
         module   = obj_name.replace('.obj', '')
         out      = run_dumpbin(obj_path)
+        found_symbols = False
         
         for line in out.splitlines():
             # MSVC dumpbin /SYMBOLS output lines look like:
@@ -64,12 +69,31 @@ def main():
             m = re.search(r'\|\s+(\S+)\s*$', line)
             if not m:
                 continue
-            sym = m.group(1).lstrip('_')  # strip leading underscore (x86 convention)
+            found_symbols = True
+            sym = m.group(1)  # x64: preserve compiler/import prefixes
             
             if 'UNDEF' in line and 'External' in line:
                 undefined[sym].append(module)
             elif 'External' in line and 'UNDEF' not in line:
                 defined[sym].append(module)
+        if not found_symbols and 'ANONYMOUS OBJECT' in out:
+            opaque.append(module)
+
+    linked = {}
+    if os.path.isfile(LINK_MAP):
+        with open(LINK_MAP, encoding='utf-8', errors='replace') as f:
+            for line in f:
+                match = re.match(r'\s+[0-9A-Fa-f]{4}:[0-9A-Fa-f]{8}\s+(\S+)\s+([0-9A-Fa-f]{16})\b', line)
+                if match:
+                    linked[match[1]] = match[2]
+    if opaque and not {'main', 'func_80003100'}.issubset(linked):
+        raise SystemExit('Objetos /GL exigem mapa final válido; recompile o target com /MAP.')
+    imports = []
+    if os.path.isfile(EXECUTABLE):
+        result = subprocess.run([DUMPBIN, '/IMPORTS', EXECUTABLE], capture_output=True, text=True, errors='replace')
+        if result.returncode:
+            raise SystemExit('dumpbin /IMPORTS falhou no executável final.')
+        imports = sorted(set(re.findall(r'^\s+(\S+\.dll)\s*$', result.stdout, re.I | re.M)))
 
     # Find multidefined and truly undefined
     multidefined = {s: mods for s, mods in defined.items() if len(mods) > 1}
@@ -80,9 +104,23 @@ def main():
     lines.append("INVENTÁRIO DE SÍMBOLOS - Digimon Rumble Arena 2 Recomp")
     lines.append("=" * 70)
     lines.append(f"Total de .obj analisados: {len(objs)}")
-    lines.append(f"Símbolos DEFINIDOS únicos: {len(defined)}")
-    lines.append(f"MULTIDEFINIDOS: {len(multidefined)}")
-    lines.append(f"INDEFINIDOS (não resolvidos): {len(truly_undef)}")
+    lines.append(f"Objetos /GL sem tabela COFF legível por /SYMBOLS: {len(opaque)}")
+    if opaque:
+        lines.append('Contagens pré-link indisponíveis para /GL; zero símbolos COFF não comprova resolução.')
+    else:
+        lines.append(f"Símbolos DEFINIDOS únicos: {len(defined)}")
+        lines.append(f"MULTIDEFINIDOS/COMDAT pré-link: {len(multidefined)}")
+        lines.append(f"Referências externas pré-link (incluem imports): {len(truly_undef)}")
+    lines.append(f"Símbolos no mapa do executável ligado: {len(linked)}")
+    lines.append(f"DLLs de importação no executável: {', '.join(imports)}")
+    lines.append('O linker determina resolução final; COMDATs e imports pré-link não são erros de link.')
+    if linked:
+        lines.append('--- MAPA FINAL POR CATEGORIA ---')
+        linked_categories = defaultdict(int)
+        for name in linked:
+            linked_categories[categorize(name)] += 1
+        for category, count in sorted(linked_categories.items()):
+            lines.append(f'  {category}: {count}')
     lines.append("")
 
     # Count by category
@@ -102,7 +140,7 @@ def main():
             for r in refs[:3]:
                 lines.append(f"      ref: {r}")
         lines.append("")
-    else:
+    elif not opaque:
         lines.append("✓ Nenhum símbolo indefinido encontrado!")
         lines.append("")
 
@@ -113,7 +151,7 @@ def main():
             for m in mods[:4]:
                 lines.append(f"    in: {m}")
         lines.append("")
-    else:
+    elif not opaque:
         lines.append("✓ Nenhum símbolo multidefinido encontrado!")
         lines.append("")
 
