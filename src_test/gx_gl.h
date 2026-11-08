@@ -21,6 +21,8 @@ typedef struct {u32 words[0x1058];bool projection,lighting;} GXGLTransform;
 typedef struct {u64 draws,stream_bytes,orphans,shader_compiles,uniform_lookups,vram_copies,geometry_hits,geometry_uploads,xf_uniform_blocks,geometry_hashes,dynamic_streams,hash_ticks,lookup_ticks,repack_ticks;} GXGLStats;
 void gx_gl_set_geometry_cache(bool enabled);
 bool gx_gl_geometry_cache(void);
+void gx_gl_set_internal_scale(float scale);
+float gx_gl_get_internal_scale(void);
 void gx_gl_get_stats(GXGLStats* stats);
 bool gx_gl_copy_color(SDL_Renderer* renderer,SDL_Texture* destination,const SDL_Rect* source);
 bool gx_gl_copy_texture(SDL_Renderer* renderer,SDL_Texture* destination,const SDL_Rect* source,u32 format,u32 step,bool luma);

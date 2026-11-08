@@ -7,6 +7,9 @@ import subprocess
 import sys
 import os
 import re
+import argparse
+import shutil
+from pathlib import Path
 from collections import defaultdict
 
 DUMPBIN = r"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\bin\Hostx64\x64\dumpbin.exe"
@@ -43,6 +46,29 @@ def categorize(name):
     return "UNKNOWN"
 
 def main():
+    global DUMPBIN, OBJ_DIR, REPORT, LINK_MAP, EXECUTABLE
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--build-dir', type=Path, help='CMake binary directory')
+    parser.add_argument('--config', default='Release')
+    parser.add_argument('--dumpbin', type=Path)
+    parser.add_argument('--report', type=Path)
+    args = parser.parse_args()
+    if args.build_dir:
+        base = args.build_dir.resolve()
+        OBJ_DIR = str(base / 'digimon_test.dir' / args.config)
+        LINK_MAP = str(base / args.config / 'digimon_test.map')
+        EXECUTABLE = str(base / args.config / 'digimon_test.exe')
+    if args.report:
+        REPORT = str(args.report)
+    candidates = [str(args.dumpbin)] if args.dumpbin else [shutil.which('dumpbin'), DUMPBIN]
+    if not any(p and os.path.isfile(p) for p in candidates):
+        vswhere = Path(os.environ.get('ProgramFiles(x86)', 'C:/Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+        if vswhere.is_file():
+            result = subprocess.run([str(vswhere), '-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-find', 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe'], capture_output=True, text=True)
+            candidates.extend(result.stdout.splitlines())
+    DUMPBIN = next((p for p in candidates if p and os.path.isfile(p)), '')
+    if not DUMPBIN:
+        raise SystemExit('dumpbin.exe not found. Use a VS x64 Native Tools terminal or --dumpbin <path>.')
     if not os.path.isdir(OBJ_DIR):
         print(f"OBJ_DIR não encontrado: {OBJ_DIR}")
         sys.exit(1)

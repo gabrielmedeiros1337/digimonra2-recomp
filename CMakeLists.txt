@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 
 # Paths
-set(DOLRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ModernGekko-Template/lib/DolRecomp")
+set(DOLRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/recomp-deps/DolRecomp")
 set(GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/recompiled_code/generated")
 set(SDL2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL2")
 
@@ -202,7 +202,7 @@ if(MSVC)
     endif()
 endif()
 
-set(XXHASH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Externals/xxhash/xxHash")
+set(XXHASH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/recomp-deps/dolphin/Externals/xxhash/xxHash")
 if(EXISTS "${XXHASH_DIR}/xxhash.h")
     set_property(SOURCE src_test/gx_pipe.c src_test/gx_gl.c APPEND PROPERTY INCLUDE_DIRECTORIES "${XXHASH_DIR}")
     set_property(SOURCE src_test/gx_pipe.c src_test/gx_gl.c APPEND PROPERTY COMPILE_DEFINITIONS DIGIMON_XXHASH=1)
@@ -230,7 +230,7 @@ if(MSVC AND DIGIMON_PGO_MODE STREQUAL "GENERATE")
 endif()
 
 # Freely generated DSP coefficients shipped by the pinned Dolphin checkout.
-set(DSP_COEFFICIENTS "${CMAKE_CURRENT_SOURCE_DIR}/ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Data/Sys/GC/dsp_coef.bin")
+set(DSP_COEFFICIENTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/recomp-deps/dolphin/Data/Sys/GC/dsp_coef.bin")
 if(EXISTS "${DSP_COEFFICIENTS}")
     add_custom_command(TARGET digimon_test POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -484,3 +484,5 @@ target_compile_definitions(chunk_stack_probe PRIVATE DOLRECOMP_RAM_TRACKING=0)
 if(MSVC)
     target_compile_options(chunk_stack_probe PRIVATE /O2 /Ob3 /Oi /GL- /FAs "/Fa${CMAKE_BINARY_DIR}/chunk_stack_probe.asm")
 endif()
+
+include(cmake/Usability.cmake)

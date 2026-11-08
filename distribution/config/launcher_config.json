@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "vsync": false,
+  "window_mode": 0,
+  "window_resolution": 1,
+  "internal_resolution": 0,
+  "image_path": "",
+  "keyboard_enabled": true,
+  "keyboard_port": 0,
+  "ports": ["keyboard", "none", "none", "none"],
+  "keys": [29, 27, 6, 25, 43, 40, 20, 8, 26, 22, 4, 7, 82, 81, 80, 79, 12, 14, 13, 15]
+}

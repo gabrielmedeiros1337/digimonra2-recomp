@@ -1,0 +1,3 @@
+# Preserve the validated dependency snapshot byte-for-byte across Windows clones.
+third_party/recomp-deps/** -text -whitespace
+third_party/SDL2/lib/x64/* -text

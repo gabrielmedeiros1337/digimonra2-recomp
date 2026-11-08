@@ -34,7 +34,8 @@ static bool frame_queue_pe(void){return !gx_frame_active() || gx_frame_submit_pe
 static bool frame_backend_ensure(void){
     if(s_efb)return true;
     SDL_Texture* previous=SDL_GetRenderTarget(s_renderer);
-    s_efb=SDL_CreateTexture(s_renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,640,528);
+    int efb_w=(int)(640.0f*s_internal_scale+0.5f),efb_h=(int)(528.0f*s_internal_scale+0.5f);
+    s_efb=SDL_CreateTexture(s_renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,efb_w,efb_h);
     if(!s_efb)return false;
     SDL_SetRenderTarget(s_renderer,s_efb);SDL_SetRenderDrawColor(s_renderer,0,0,0,255);SDL_RenderClear(s_renderer);SDL_SetRenderTarget(s_renderer,previous);return true;
 }
@@ -242,16 +243,18 @@ static bool frame_execute(const u8* data,u32 bytes,void* ignored){
             frame_backend.decode_ticks+=SDL_GetPerformanceCounter()-decode_start;frame_backend.raw_draws++;frame_backend.raw_vertices+=count;
             u64 started=SDL_GetPerformanceCounter();bool gpu=op->gpu;QueuedDraw draw=op->draw;
             GXRenderView view={&draw,frame_backend.unused,frame_backend.raw,(GXGLTransform*)&op->xf,&gpu,&s_last_raw_hash,1,count};
+            int efb_w=(int)(640.0f*s_internal_scale+0.5f),efb_h=(int)(480.0f*s_internal_scale+0.5f);
             if(!frame_backend_ensure())return false;if(SDL_GetRenderTarget(s_renderer)!=s_efb)SDL_SetRenderTarget(s_renderer,s_efb);
-            gx_pipe_render_to_sdl_timed_body(s_renderer,&cpu,0,0,640,480,&view);
+            gx_pipe_render_to_sdl_timed_body(s_renderer,&cpu,0,0,efb_w,efb_h,&view);
             frame_backend.draw_ticks+=SDL_GetPerformanceCounter()-started;
         }else if(header->type==FRAME_DRAW){
             u64 started=SDL_GetPerformanceCounter();
             const FrameDraw* op=(const FrameDraw*)header;const u8* p=(const u8*)op;const FrameRange* r=(const FrameRange*)(p+op->ranges);
             for(u32 i=0;i<op->range_count;i++)memcpy((r[i].target ? frame_backend.palette:cpu.ram)+r[i].offset,p+r[i].data,r[i].bytes);
             GXRenderView view={(QueuedDraw*)(p+op->draws),(QueuedVertex*)(p+op->vertices),(GXGLRawVertex*)(p+op->raw),(GXGLTransform*)(p+op->transforms),(bool*)(p+op->gpu),(u64*)(p+op->hashes),op->draw_count,op->vertex_count};
+            int efb_w=(int)(640.0f*s_internal_scale+0.5f),efb_h=(int)(480.0f*s_internal_scale+0.5f);
             if(!frame_backend_ensure())return false;SDL_Texture* previous=SDL_GetRenderTarget(s_renderer);SDL_SetRenderTarget(s_renderer,s_efb);
-            gx_pipe_render_to_sdl_timed_body(s_renderer,&cpu,0,0,640,480,&view);SDL_RenderFlush(s_renderer);SDL_SetRenderTarget(s_renderer,previous);
+            gx_pipe_render_to_sdl_timed_body(s_renderer,&cpu,0,0,efb_w,efb_h,&view);SDL_RenderFlush(s_renderer);SDL_SetRenderTarget(s_renderer,previous);
             frame_backend.draw_ticks+=SDL_GetPerformanceCounter()-started;
         }else if(header->type==FRAME_COPY){
             const FrameCopy* op=(const FrameCopy*)header;CPUState copy=cpu;if(op->real_ram){copy.ram=frame_backend.real_ram;frame_backend.ram_copies++;}

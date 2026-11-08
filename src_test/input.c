@@ -1,37 +1,27 @@
 #include "input.h"
+#include "input_devices.h"
+#include "portable_config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static SDL_GameController* s_controller = NULL;
-static SDL_Joystick* s_joystick = NULL;
-static NativePadState s_pads[4] = {0};
-static u32 s_si_regs[16] = {0};
-
-bool input_init(void) {
-    memset(s_pads, 0, sizeof(s_pads));
-    for(int i=0;i<4;i++)s_pads[i].connected=true; // Four physical-keyboard pads.
-    printf("[Input] P2/P3/P4: 7/8/9=A; Shift+7/8/9=Start (also numeric keypad).\n");
-
-    int num_joysticks = SDL_NumJoysticks();
-    for (int i = 0; i < num_joysticks; i++) {
-        if (SDL_IsGameController(i)) {
-            s_controller = SDL_GameControllerOpen(i);
-            if (s_controller) {
-                printf("[Input Driver] Controle conectado: '%s'\n", SDL_GameControllerName(s_controller));
-                break;
-            }
-        }
-    }
-
-    if (!s_controller && num_joysticks > 0) s_joystick = SDL_JoystickOpen(0);
-    if (!s_controller) {
-        printf("[Input Driver] Nenhum controle fisico detectado. Teclado habilitado (WASD/Setas, J=A, K=B, Enter=Start).\n");
-    }
-
-    return true;
+static NativePadState s_pads[4];
+static u32 s_si_regs[16];
+static LauncherConfig s_config;
+static bool s_suppress_enter;
+void input_suppress_enter(void){s_suppress_enter=true;}
+static SDL_GameController* s_controllers[4];
+static SDL_Joystick* s_joysticks[4];
+void input_configure(const LauncherConfig* c){s_config=*c;}
+static void close_devices(void){for(int i=0;i<4;i++){if(s_controllers[i])SDL_GameControllerClose(s_controllers[i]);else if(s_joysticks[i])SDL_JoystickClose(s_joysticks[i]);s_controllers[i]=NULL;s_joysticks[i]=NULL;}}
+static void open_devices(void){
+ close_devices();InputDevice devices[INPUT_DEVICE_MAX];int n=input_devices_list(devices),selected[4];
+ input_devices_assign(devices,n,s_config.ports,selected);
+ for(int p=0;p<4;p++)if(selected[p]>=0){
+  int d=selected[p];
+  int index=devices[d].index;if(SDL_IsGameController(index)){s_controllers[p]=SDL_GameControllerOpen(index);if(s_controllers[p])s_joysticks[p]=SDL_GameControllerGetJoystick(s_controllers[p]);}else s_joysticks[p]=SDL_JoystickOpen(index);
+ }
 }
-
+bool input_init(void){memset(s_pads,0,sizeof(s_pads));open_devices();return true;}
 bool input_map_extra_keys(const Uint8* keys,bool focused,NativePadState pads[4]) {
     static const SDL_Scancode top[3]={SDL_SCANCODE_7,SDL_SCANCODE_8,SDL_SCANCODE_9};
     static const SDL_Scancode num[3]={SDL_SCANCODE_KP_7,SDL_SCANCODE_KP_8,SDL_SCANCODE_KP_9};
@@ -68,158 +58,46 @@ u32 input_store_pad_status(CPUState* cpu,u32 address,const NativePadState pads[4
     return mask;
 }
 
-void input_poll(void) {
-    for(int i=0;i<4;i++){memset(&s_pads[i],0,sizeof(s_pads[i]));s_pads[i].connected=true;}
-    const Uint8* state=SDL_GetKeyboardState(NULL);
-    bool extra_shift=input_map_extra_keys(state,SDL_GetKeyboardFocus()!=NULL,s_pads);
-    static u16 previous_extra[3];
-    for(int i=1;i<4;i++)if(previous_extra[i-1]!=s_pads[i].button) {
-        printf("[Input P%d] buttons=%04X\n",i+1,s_pads[i].button);previous_extra[i-1]=s_pads[i].button;
-    }
-    if(!SDL_GetKeyboardFocus())goto controller_poll;
 
-    // D-Pad / Movement (Arrow keys and WASD fallback)
-    if (state[SDL_SCANCODE_LEFT] || state[SDL_SCANCODE_A]) {
-        s_pads[0].button |= PAD_BUTTON_LEFT;
-        s_pads[0].stick_x = -100;
-    }
-    if (state[SDL_SCANCODE_RIGHT] || state[SDL_SCANCODE_D]) {
-        s_pads[0].button |= PAD_BUTTON_RIGHT;
-        s_pads[0].stick_x = 100;
-    }
-    if (state[SDL_SCANCODE_UP] || state[SDL_SCANCODE_W]) {
-        s_pads[0].button |= PAD_BUTTON_UP;
-        s_pads[0].stick_y = 100; // GameCube Y+ is UP
-    }
-    if (state[SDL_SCANCODE_DOWN] || state[SDL_SCANCODE_S]) {
-        s_pads[0].button |= PAD_BUTTON_DOWN;
-        s_pads[0].stick_y = -100; // GameCube Y- is DOWN
-    }
-
-    // Action buttons:
-    // PAD_BUTTON_A = 0x0100 (Tecla Z ou J)
-    if (state[SDL_SCANCODE_Z] || state[SDL_SCANCODE_J]) {
-        s_pads[0].button |= PAD_BUTTON_A;
-    }
-    // PAD_BUTTON_B = 0x0200 (Tecla X ou K)
-    if (state[SDL_SCANCODE_X] || state[SDL_SCANCODE_K]) {
-        s_pads[0].button |= PAD_BUTTON_B;
-    }
-    // PAD_BUTTON_X = 0x0400 (Tecla C ou U)
-    if (state[SDL_SCANCODE_C] || state[SDL_SCANCODE_U]) {
-        s_pads[0].button |= PAD_BUTTON_X;
-    }
-    // PAD_BUTTON_Y = 0x0800 (Tecla V ou I)
-    if (state[SDL_SCANCODE_V] || state[SDL_SCANCODE_I]) {
-        s_pads[0].button |= PAD_BUTTON_Y;
-    }
-    // PAD_BUTTON_START = 0x1000 (Tecla Enter ou Espaço)
-    if (state[SDL_SCANCODE_RETURN] || state[SDL_SCANCODE_SPACE]) {
-        s_pads[0].button |= PAD_BUTTON_START;
-    }
-    if (state[SDL_SCANCODE_Q] || (state[SDL_SCANCODE_LSHIFT] && !extra_shift)) {
-        s_pads[0].button |= PAD_TRIGGER_L;
-        s_pads[0].trigger_l = 255;
-    }
-    if (state[SDL_SCANCODE_E] || (state[SDL_SCANCODE_RSHIFT] && !extra_shift)) {
-        s_pads[0].button |= PAD_TRIGGER_R;
-        s_pads[0].trigger_r = 255;
-    }
-    if (state[SDL_SCANCODE_TAB]) {
-        s_pads[0].button |= PAD_TRIGGER_Z;
-    }
-
-controller_poll:
-    // 2. Physical Game Controller Polling
-    if (s_controller && SDL_GameControllerGetAttached(s_controller)) {
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_A))
-            s_pads[0].button |= PAD_BUTTON_A;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_B))
-            s_pads[0].button |= PAD_BUTTON_B;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_X))
-            s_pads[0].button |= PAD_BUTTON_X;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_Y))
-            s_pads[0].button |= PAD_BUTTON_Y;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_START))
-            s_pads[0].button |= PAD_BUTTON_START;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_DPAD_UP))
-            s_pads[0].button |= PAD_BUTTON_UP;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN))
-            s_pads[0].button |= PAD_BUTTON_DOWN;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT))
-            s_pads[0].button |= PAD_BUTTON_LEFT;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))
-            s_pads[0].button |= PAD_BUTTON_RIGHT;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER))
-            s_pads[0].button |= PAD_TRIGGER_L;
-        if (SDL_GameControllerGetButton(s_controller, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
-            s_pads[0].button |= PAD_TRIGGER_Z;
-
-        // Left Analog Stick
-        Sint16 lx = SDL_GameControllerGetAxis(s_controller, SDL_CONTROLLER_AXIS_LEFTX);
-        Sint16 ly = SDL_GameControllerGetAxis(s_controller, SDL_CONTROLLER_AXIS_LEFTY);
-        if (abs(lx) > 8000) s_pads[0].stick_x = (s8)(lx / 256);
-        if (abs(ly) > 8000) s_pads[0].stick_y = (s8)(-ly / 258); // Invert Y for GameCube
-
-        // Right Analog Stick (C-Stick)
-        Sint16 rx = SDL_GameControllerGetAxis(s_controller, SDL_CONTROLLER_AXIS_RIGHTX);
-        Sint16 ry = SDL_GameControllerGetAxis(s_controller, SDL_CONTROLLER_AXIS_RIGHTY);
-        if (abs(rx) > 8000) s_pads[0].substick_x = (s8)(rx / 256);
-        if (abs(ry) > 8000) s_pads[0].substick_y = (s8)(-ry / 258);
-
-        // Analog Triggers — raise digital-press threshold to 30000 to avoid rest-position ghosts
-        Sint16 lt = SDL_GameControllerGetAxis(s_controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-        Sint16 rt = SDL_GameControllerGetAxis(s_controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
-        if (lt > 4000) {
-            s_pads[0].trigger_l = (u8)(lt / 128);
-            if (lt > 30000) s_pads[0].button |= PAD_TRIGGER_L;
-        }
-        if (rt > 4000) {
-            s_pads[0].trigger_r = (u8)(rt / 128);
-            if (rt > 30000) s_pads[0].button |= PAD_TRIGGER_R;
-        }
-    }
-    if (s_joystick && SDL_JoystickGetAttached(s_joystick)) {
-        static const u16 buttons[] = { PAD_BUTTON_A, PAD_BUTTON_B, PAD_BUTTON_X,
-            PAD_BUTTON_Y, PAD_TRIGGER_L, PAD_TRIGGER_Z, PAD_BUTTON_START, PAD_TRIGGER_R };
-        int count = SDL_JoystickNumButtons(s_joystick);
-        for (int i = 0; i < count && i < 8; i++)
-            if (SDL_JoystickGetButton(s_joystick, i)) s_pads[0].button |= buttons[i];
-        if (SDL_JoystickNumAxes(s_joystick) >= 2) {
-            int x = SDL_JoystickGetAxis(s_joystick, 0), y = SDL_JoystickGetAxis(s_joystick, 1);
-            if (abs(x) > 8000) s_pads[0].stick_x = (s8)(x / 258);
-            if (abs(y) > 8000) s_pads[0].stick_y = (s8)(-y / 258);
-        }
-        Uint8 hat = SDL_JoystickNumHats(s_joystick) ? SDL_JoystickGetHat(s_joystick, 0) : 0;
-        if (hat & SDL_HAT_UP) s_pads[0].button |= PAD_BUTTON_UP;
-        if (hat & SDL_HAT_DOWN) s_pads[0].button |= PAD_BUTTON_DOWN;
-        if (hat & SDL_HAT_LEFT) s_pads[0].button |= PAD_BUTTON_LEFT;
-        if (hat & SDL_HAT_RIGHT) s_pads[0].button |= PAD_BUTTON_RIGHT;
-    }
-
+static void poll_controller(int p){
+ NativePadState* pad=&s_pads[p];SDL_GameController* c=s_controllers[p];SDL_Joystick* j=s_joysticks[p];
+ if(!j||!SDL_JoystickGetAttached(j))return;pad->connected=true;
+ if(c){
+  static const SDL_GameControllerButton buttons[]={SDL_CONTROLLER_BUTTON_A,SDL_CONTROLLER_BUTTON_B,SDL_CONTROLLER_BUTTON_X,SDL_CONTROLLER_BUTTON_Y,SDL_CONTROLLER_BUTTON_BACK,SDL_CONTROLLER_BUTTON_START,SDL_CONTROLLER_BUTTON_LEFTSHOULDER,SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,SDL_CONTROLLER_BUTTON_DPAD_UP,SDL_CONTROLLER_BUTTON_DPAD_DOWN,SDL_CONTROLLER_BUTTON_DPAD_LEFT,SDL_CONTROLLER_BUTTON_DPAD_RIGHT};
+  static const u16 masks[]={PAD_BUTTON_A,PAD_BUTTON_B,PAD_BUTTON_X,PAD_BUTTON_Y,PAD_TRIGGER_Z,PAD_BUTTON_START,PAD_TRIGGER_L,PAD_TRIGGER_Z,PAD_BUTTON_UP,PAD_BUTTON_DOWN,PAD_BUTTON_LEFT,PAD_BUTTON_RIGHT};
+  for(int i=0;i<12;i++)if(SDL_GameControllerGetButton(c,buttons[i]))pad->button|=masks[i];
+  int x=SDL_GameControllerGetAxis(c,SDL_CONTROLLER_AXIS_LEFTX),y=SDL_GameControllerGetAxis(c,SDL_CONTROLLER_AXIS_LEFTY),cx=SDL_GameControllerGetAxis(c,SDL_CONTROLLER_AXIS_RIGHTX),cy=SDL_GameControllerGetAxis(c,SDL_CONTROLLER_AXIS_RIGHTY);
+  if(abs(x)>8000)pad->stick_x=(s8)(x/258);if(abs(y)>8000)pad->stick_y=(s8)(-y/258);if(abs(cx)>8000)pad->substick_x=(s8)(cx/258);if(abs(cy)>8000)pad->substick_y=(s8)(-cy/258);
+  int l=SDL_GameControllerGetAxis(c,SDL_CONTROLLER_AXIS_TRIGGERLEFT),r=SDL_GameControllerGetAxis(c,SDL_CONTROLLER_AXIS_TRIGGERRIGHT);if(l>4000)pad->trigger_l=(u8)(l/129);if(r>4000)pad->trigger_r=(u8)(r/129);if(l>30000)pad->button|=PAD_TRIGGER_L;if(r>30000)pad->button|=PAD_TRIGGER_R;
+ }else{
+  static const u16 masks[]={PAD_BUTTON_A,PAD_BUTTON_B,PAD_BUTTON_X,PAD_BUTTON_Y,PAD_TRIGGER_L,PAD_TRIGGER_Z,PAD_BUTTON_START,PAD_TRIGGER_R};
+  for(int b=0;b<8&&b<SDL_JoystickNumButtons(j);b++)if(SDL_JoystickGetButton(j,b))pad->button|=masks[b];
+  s8* axes[]={&pad->stick_x,&pad->stick_y,&pad->substick_x,&pad->substick_y};for(int a=0;a<4&&a<SDL_JoystickNumAxes(j);a++){int v=SDL_JoystickGetAxis(j,a);if(abs(v)>8000)*axes[a]=(s8)((a&1)?-v/258:v/258);}
+  Uint8 hat=SDL_JoystickNumHats(j)?SDL_JoystickGetHat(j,0):0;if(hat&SDL_HAT_UP)pad->button|=PAD_BUTTON_UP;if(hat&SDL_HAT_DOWN)pad->button|=PAD_BUTTON_DOWN;if(hat&SDL_HAT_LEFT)pad->button|=PAD_BUTTON_LEFT;if(hat&SDL_HAT_RIGHT)pad->button|=PAD_BUTTON_RIGHT;
+ }
+ if(pad->button&PAD_TRIGGER_L)pad->trigger_l=255;if(pad->button&PAD_TRIGGER_R)pad->trigger_r=255;
 }
-
-void input_handle_event(const SDL_Event* event) {
-    if (event->type == SDL_CONTROLLERDEVICEREMOVED && s_controller &&
-        SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(s_controller)) == event->cdevice.which) {
-        SDL_GameControllerClose(s_controller);
-        s_controller = NULL;
-    }
-    if (event->type == SDL_JOYDEVICEREMOVED && s_joystick &&
-        SDL_JoystickInstanceID(s_joystick) == event->jdevice.which) {
-        SDL_JoystickClose(s_joystick);
-        s_joystick = NULL;
-    }
-    if (event->type == SDL_CONTROLLERDEVICEADDED && !s_controller &&
-        SDL_IsGameController(event->cdevice.which)) {
-        if (s_joystick) { SDL_JoystickClose(s_joystick); s_joystick = NULL; }
-        s_controller = SDL_GameControllerOpen(event->cdevice.which);
-    }
-    if (event->type == SDL_JOYDEVICEADDED && !s_controller && !s_joystick &&
-        !SDL_IsGameController(event->jdevice.which))
-        s_joystick = SDL_JoystickOpen(event->jdevice.which);
+void input_apply_keyboard(const Uint8* state,bool focused,const LauncherConfig* config,NativePadState pads[4]){
+ if(!config->keyboard_enabled||config->keyboard_port<0||config->keyboard_port>3)return;
+ int p=config->keyboard_port;if(strcmp(config->ports[p],"keyboard"))return;NativePadState* pad=pads+p;pad->connected=true;if(!focused)return;
+ static const u16 mask[]={PAD_BUTTON_A,PAD_BUTTON_B,PAD_BUTTON_X,PAD_BUTTON_Y,PAD_TRIGGER_Z,PAD_BUTTON_START,PAD_TRIGGER_L,PAD_TRIGGER_R};
+ bool on[KEY_BIND_COUNT];for(int i=0;i<KEY_BIND_COUNT;i++){int k=config->keys[i];on[i]=k>0&&k<SDL_NUM_SCANCODES&&state[k];}
+ for(int i=0;i<8;i++)if(on[i])pad->button|=mask[i];pad->trigger_l=on[6]?255:0;pad->trigger_r=on[7]?255:0;
+ pad->stick_x=(s8)(100*((int)on[11]-(int)on[10]));pad->stick_y=(s8)(100*((int)on[8]-(int)on[9]));
+ pad->substick_x=(s8)(100*((int)on[19]-(int)on[18]));pad->substick_y=(s8)(100*((int)on[16]-(int)on[17]));
+ if(on[12])pad->button|=PAD_BUTTON_UP;if(on[13])pad->button|=PAD_BUTTON_DOWN;if(on[14])pad->button|=PAD_BUTTON_LEFT;if(on[15])pad->button|=PAD_BUTTON_RIGHT;
 }
-
+void input_poll(void){
+ memset(s_pads,0,sizeof(s_pads));for(int i=0;i<4;i++)poll_controller(i);
+ const Uint8* keys=SDL_GetKeyboardState(NULL);
+ if(s_suppress_enter&&(keys[SDL_SCANCODE_RETURN]||keys[SDL_SCANCODE_KP_ENTER])){
+  {Uint8 filtered[SDL_NUM_SCANCODES];memcpy(filtered,keys,sizeof(filtered));filtered[SDL_SCANCODE_RETURN]=filtered[SDL_SCANCODE_KP_ENTER]=0;input_apply_keyboard(filtered,SDL_GetKeyboardFocus()!=NULL,&s_config,s_pads);return;}
+ }
+ input_apply_keyboard(keys,SDL_GetKeyboardFocus()!=NULL,&s_config,s_pads);
+}
+void input_handle_event(const SDL_Event* event){
+ if((event->type==SDL_KEYUP||(event->type==SDL_KEYDOWN&&!event->key.repeat&&!(event->key.keysym.mod&KMOD_ALT)))&&(event->key.keysym.sym==SDLK_RETURN||event->key.keysym.sym==SDLK_KP_ENTER))s_suppress_enter=false;
+ if(event->type==SDL_JOYDEVICEADDED||event->type==SDL_JOYDEVICEREMOVED)open_devices();}
 #ifdef _MSC_VER
 static __declspec(thread) const NativePadState* s_frame_pads;
 #else
@@ -264,10 +142,4 @@ void input_write_si(CPUState* cpu, u32 reg_offset, u32 val) {
     s_si_regs[idx & 0x0F] = val;
 }
 
-void input_shutdown(void) {
-    if (s_joystick) { SDL_JoystickClose(s_joystick); s_joystick = NULL; }
-    if (s_controller) {
-        SDL_GameControllerClose(s_controller);
-        s_controller = NULL;
-    }
-}
+void input_shutdown(void){close_devices();}

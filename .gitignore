@@ -37,3 +37,12 @@ __pycache__/
 *.py[cod]
 /tools/sample_stacks.exe
 /symbol_inventory_report.txt
+
+# Portable release output and user-owned portable data
+/DigimonRA2_PC/
+/config/
+/saves/
+*.rvz
+
+# Historical local checkout; production dependencies are versioned in third_party/recomp-deps.
+/ModernGekko-Template/
