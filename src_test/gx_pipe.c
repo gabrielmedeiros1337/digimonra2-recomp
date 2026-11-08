@@ -65,10 +65,21 @@ static u16 s_pe_status = 0x000F; // PE Idle & Ready
 static u16 s_pe_token = 0;
 static SDL_Renderer* s_renderer;
 static SDL_Texture* s_efb;
-typedef struct {u32 address,width,height,pitch;SDL_Texture* image;bool pending;} XFBImage;
+static float s_internal_scale = 1.0f;
+typedef struct {u32 address,width,height,pitch,scaled_w,scaled_h;SDL_Texture* image;bool pending;} XFBImage;
 static XFBImage s_xfb_images[8];
 static bool s_xfb_vram;
 static u64 s_xfb_gpu_copies,s_xfb_resolves;
+void gx_pipe_set_internal_scale(float scale) {
+    if(scale<1.0f)scale=1.0f;if(scale>4.0f)scale=4.0f;
+    s_internal_scale=scale;gx_gl_set_internal_scale(scale);
+    if(s_efb){
+        int w=0,h=0;SDL_QueryTexture(s_efb,NULL,NULL,&w,&h);
+        int target_w=(int)(640.0f*scale+0.5f),target_h=(int)(528.0f*scale+0.5f);
+        if(w!=target_w || h!=target_h){SDL_DestroyTexture(s_efb);s_efb=NULL;}
+    }
+}
+float gx_pipe_get_internal_scale(void){return s_internal_scale;}
 static bool resolve_xfb(CPUState* cpu,XFBImage* image) {
     if(!image->pending)return true;
     u32 offset=image->address-GC_RAM_BASE;
@@ -95,18 +106,26 @@ static bool snapshot_xfb(CPUState* cpu,u32 address,u32 width,u32 height,u32 pitc
     for(u32 i=0;i<8;i++)if(s_xfb_images[i].address==address){image=s_xfb_images+i;break;}
     if(!image)for(u32 i=0;i<8;i++)if(!s_xfb_images[i].pending){image=s_xfb_images+i;break;}
     if(!image)return false; // Preserve all live VI allocations; use RAM fallback at capacity.
-    if(image->image && (image->width!=width || image->height!=height)) {
+    u32 scaled_w = (u32)(width * s_internal_scale + 0.5f);
+    u32 scaled_h = (u32)(height * s_internal_scale + 0.5f);
+    if(image->image && (image->width!=width || image->height!=height || image->scaled_w!=scaled_w || image->scaled_h!=scaled_h)) {
         if(!resolve_xfb(cpu,image))return false;
         SDL_DestroyTexture(image->image);image->image=NULL;
     }
-    if(!image->image)image->image=SDL_CreateTexture(s_renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,width,height);
+    if(!image->image)image->image=SDL_CreateTexture(s_renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,scaled_w,scaled_h);
     if(!image->image)return false;
+    SDL_Rect scaled_source = {
+        (int)(source->x * s_internal_scale + 0.5f),
+        (int)(source->y * s_internal_scale + 0.5f),
+        (int)(source->w * s_internal_scale + 0.5f),
+        (int)(source->h * s_internal_scale + 0.5f)
+    };
     SDL_Texture* previous=SDL_GetRenderTarget(s_renderer);SDL_BlendMode blend;
     SDL_GetTextureBlendMode(s_efb,&blend);SDL_SetTextureBlendMode(s_efb,SDL_BLENDMODE_NONE);
     bool ok=SDL_SetRenderTarget(s_renderer,image->image)==0;
-    if(ok)ok=SDL_RenderCopy(s_renderer,s_efb,source,NULL)==0;
+    if(ok)ok=SDL_RenderCopy(s_renderer,s_efb,&scaled_source,NULL)==0;
     SDL_RenderFlush(s_renderer);SDL_SetRenderTarget(s_renderer,previous);SDL_SetTextureBlendMode(s_efb,blend);
-    if(ok){image->address=address;image->width=width;image->height=height;image->pitch=pitch;image->pending=true;s_xfb_gpu_copies++;}
+    if(ok){image->address=address;image->width=width;image->height=height;image->pitch=pitch;image->scaled_w=scaled_w;image->scaled_h=scaled_h;image->pending=true;s_xfb_gpu_copies++;}
     return ok;
 }
 static u32 s_bp[256];
@@ -127,7 +146,22 @@ static bool flush_efb(CPUState* cpu);
 static bool copy_efb(CPUState* cpu, u32 control);
 static bool copy_efb_texture(CPUState* cpu,u32 control);
 
-void gx_pipe_set_renderer(SDL_Renderer* renderer) { s_renderer = renderer; }
+void gx_pipe_set_renderer(SDL_Renderer* renderer) {
+    s_renderer = renderer;
+    if (s_renderer && !s_efb) {
+        int efb_w = (int)(640.0f * s_internal_scale + 0.5f);
+        int efb_h = (int)(528.0f * s_internal_scale + 0.5f);
+        s_efb = SDL_CreateTexture(s_renderer, SDL_PIXELFORMAT_RGBA32,
+                                  SDL_TEXTUREACCESS_TARGET, efb_w, efb_h);
+        if (s_efb) {
+            SDL_Texture* prev = SDL_GetRenderTarget(s_renderer);
+            SDL_SetRenderTarget(s_renderer, s_efb);
+            SDL_SetRenderDrawColor(s_renderer, 0, 0, 0, 255);
+            SDL_RenderClear(s_renderer);
+            SDL_SetRenderTarget(s_renderer, prev);
+        }
+    }
+}
 
 
 bool gx_pipe_init(CPUState* cpu) {
@@ -148,6 +182,24 @@ bool gx_pipe_init(CPUState* cpu) {
 
     s_cp_status = 0x000E;
     s_pe_status = 0x000F;
+
+    s_bp[0x49] = 0;
+    s_bp[0x4A] = 639u | (479u << 10);
+    s_bp[0x4D] = (640u * 2u) >> 5;
+    s_bp[0x4E] = 256;
+    s_bp[0x20] = 0;
+    s_bp[0x21] = 639u | (479u << 12);
+    s_bp_written[0x20] = true;
+    s_bp_written[0x21] = true;
+    float vp_w2 = 320.0f, vp_h2 = -240.0f, vp_zscale = 16777215.0f;
+    float vp_ox = 320.0f + 342.0f, vp_oy = 240.0f + 342.0f, vp_zoffset = 0.0f;
+    memcpy(&s_xf[0x101A], &vp_w2, 4);
+    memcpy(&s_xf[0x101B], &vp_h2, 4);
+    memcpy(&s_xf[0x101C], &vp_zscale, 4);
+    memcpy(&s_xf[0x101D], &vp_ox, 4);
+    memcpy(&s_xf[0x101E], &vp_oy, 4);
+    memcpy(&s_xf[0x101F], &vp_zoffset, 4);
+    s_xfb_vram = true;
 
     printf("[GX GPU Pipe] Pipeline de Comandos GX (Flipper GPU) inicializado.\n");
     return true;
@@ -2073,15 +2125,16 @@ void gx_pipe_render_to_sdl(SDL_Renderer* renderer, CPUState* cpu, int game_x, in
 static bool flush_efb_timed_body(CPUState* cpu) {
     if (!s_renderer) return false;
     SDL_Texture* previous = SDL_GetRenderTarget(s_renderer);
+    int efb_w=(int)(640.0f*s_internal_scale+0.5f),efb_h=(int)(528.0f*s_internal_scale+0.5f);
     if (!s_efb) {
         s_efb = SDL_CreateTexture(s_renderer, SDL_PIXELFORMAT_RGBA32,
-                                  SDL_TEXTUREACCESS_TARGET, 640, 528);
+                                  SDL_TEXTUREACCESS_TARGET, efb_w, efb_h);
         if (!s_efb) return false;
         SDL_SetRenderTarget(s_renderer, s_efb);
         SDL_SetRenderDrawColor(s_renderer, 0, 0, 0, 255);
         SDL_RenderClear(s_renderer);
     } else if (SDL_SetRenderTarget(s_renderer, s_efb) != 0) return false;
-    gx_pipe_render_to_sdl(s_renderer, cpu, 0, 0, 640, 480);
+    gx_pipe_render_to_sdl(s_renderer, cpu, 0, 0, efb_w, (int)(480.0f * s_internal_scale + 0.5f));
     SDL_RenderFlush(s_renderer);
     SDL_SetRenderTarget(s_renderer, previous);
     return true;
@@ -2098,7 +2151,14 @@ static bool flush_efb(CPUState* cpu) {
 static void clear_efb_region(const SDL_Rect* region,u32 ar,u32 gb,u32 z) {
     SDL_SetRenderDrawColor(s_renderer,(u8)ar,(u8)(gb>>8),(u8)gb,(u8)(ar>>8));
     SDL_BlendMode previous;SDL_GetRenderDrawBlendMode(s_renderer,&previous);
-    SDL_SetRenderDrawBlendMode(s_renderer,SDL_BLENDMODE_NONE);SDL_RenderFillRect(s_renderer,region);
+    SDL_SetRenderDrawBlendMode(s_renderer,SDL_BLENDMODE_NONE);
+    SDL_Rect scaled = {
+        (int)(region->x * s_internal_scale + 0.5f),
+        (int)(region->y * s_internal_scale + 0.5f),
+        (int)(region->w * s_internal_scale + 0.5f),
+        (int)(region->h * s_internal_scale + 0.5f)
+    };
+    SDL_RenderFillRect(s_renderer,&scaled);
     SDL_SetRenderDrawBlendMode(s_renderer,previous);
     gx_gl_clear_depth(s_renderer,region->x,region->y,region->w,region->h,z);
 }

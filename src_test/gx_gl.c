@@ -182,8 +182,17 @@ static GeometryEntry s_geometry[128];static u32 s_geometry_buckets[256];
 static struct {u64 hash;u32 count;} s_geometry_candidates[256];
 static u64 s_geometry_serial;static size_t s_geometry_bytes;
 static bool s_geometry_cache_enabled=true;
+static float s_internal_scale=1.0f;
 void gx_gl_set_geometry_cache(bool enabled){s_geometry_cache_enabled=enabled;}
 bool gx_gl_geometry_cache(void){return s_geometry_cache_enabled;}
+void gx_gl_set_internal_scale(float scale){
+    if(scale<1.0f)scale=1.0f;if(scale>4.0f)scale=4.0f;
+    if(fabsf(s_internal_scale-scale)>0.001f){
+        s_internal_scale=scale;
+        if(s_depth && gDeleteRenderbuffers){gDeleteRenderbuffers(1,&s_depth);s_depth=0;s_depth_fbo=0;}
+    }
+}
+float gx_gl_get_internal_scale(void){return s_internal_scale;}
 static u64 geometry_hash(const GXGLRawVertex* source,u32 count){
     s_stats.geometry_hashes++;
 #if defined(DIGIMON_XXHASH)
@@ -256,7 +265,8 @@ s_tev_uniforms[0]=find_tev_uniforms(s_program);
 }
 static void ensure_depth(void) {
     GLint fbo=0;glGetIntegerv(GL_FRAMEBUFFER_BINDING,&fbo);if(!fbo || (GLuint)fbo==s_depth_fbo)return;
-    if(!s_depth){gGenRenderbuffers(1,&s_depth);GLint previous;glGetIntegerv(GL_RENDERBUFFER_BINDING,&previous);gBindRenderbuffer(GL_RENDERBUFFER,s_depth);gRenderbufferStorage(GL_RENDERBUFFER,GL_DEPTH_COMPONENT24,640,528);gBindRenderbuffer(GL_RENDERBUFFER,(GLuint)previous);}
+    int efb_w=(int)(640.0f*s_internal_scale+0.5f),efb_h=(int)(528.0f*s_internal_scale+0.5f);
+    if(!s_depth){gGenRenderbuffers(1,&s_depth);GLint previous;glGetIntegerv(GL_RENDERBUFFER_BINDING,&previous);gBindRenderbuffer(GL_RENDERBUFFER,s_depth);gRenderbufferStorage(GL_RENDERBUFFER,GL_DEPTH_COMPONENT24,efb_w,efb_h);gBindRenderbuffer(GL_RENDERBUFFER,(GLuint)previous);}
     gFramebufferRenderbuffer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,s_depth);s_depth_fbo=(GLuint)fbo;
     glPushAttrib(GL_DEPTH_BUFFER_BIT|GL_SCISSOR_BIT);glDisable(GL_SCISSOR_TEST);glDepthMask(GL_TRUE);glClearDepth(1.0);glClear(GL_DEPTH_BUFFER_BIT);glPopAttrib();
 }
@@ -367,7 +377,8 @@ static bool gx_gl_draw_internal_timed_body(SDL_Renderer* renderer,const GXGLMate
     gUniform4iv(u_order,16,&order[0][0]);gUniform4iv(u_select,16,&select[0][0]);gUniform1i(u_stages,(GLint)stages);gUniform1i(u_bypass,!m->tev_valid);
     u32 at=m->bp[0xF3];GLint test[4]={(at>>16)&7,(at>>19)&7,(at>>22)&3,0};GLfloat refs[2]={(float)(at&255),(float)((at>>8)&255)};
     gUniform4iv(u_atest,1,test);gUniform2fv(u_aref,1,refs);gUniform1i(u_alpha,m->alpha_valid);
-    glViewport(0,0,640,528);glDepthRange(0.0,1.0);
+    int efb_w=(int)(640.0f*s_internal_scale+0.5f),efb_h=(int)(528.0f*s_internal_scale+0.5f);
+    glViewport(0,0,efb_w,efb_h);glDepthRange(0.0,1.0);
     // GX clips the projected -w..0 volume before applying the viewport depth range.
     // Native GL clipping of the viewport-mapped Z would incorrectly discard HUDs.
     const GLdouble near_plane[4]={0,0,1,1},far_plane[4]={0,0,-1,0};
@@ -389,7 +400,10 @@ glDisable(GL_LIGHTING);glDisable(GL_ALPHA_TEST);glDisable(GL_FOG);glDisable(GL_S
         int ox=(m->bp[0x59]&511)*2,oy=((m->bp[0x59]>>10)&511)*2;
         int x=(int)((m->bp[0x20]>>12)&2047)-ox,y=(int)(m->bp[0x20]&2047)-oy;
         int w=(int)((m->bp[0x21]>>12)&2047)-ox-x+1,h=(int)(m->bp[0x21]&2047)-oy-y+1;
-        glEnable(GL_SCISSOR_TEST);glScissor(x,y,w<0 ? 0 : w,h<0 ? 0 : h);
+        if(w<0)w=0;if(h<0)h=0;
+        int sx=(int)(x*s_internal_scale+0.5f),sy=(int)(y*s_internal_scale+0.5f);
+        int sw=(int)(w*s_internal_scale+0.5f),sh=(int)(h*s_internal_scale+0.5f);
+        glEnable(GL_SCISSOR_TEST);glScissor(sx,sy,sw,sh);
     }else glDisable(GL_SCISSOR_TEST);
     preparation=frame_timing_enter(FRAME_GX_DECODE);
     bool cache=raw && s_geometry_cache_enabled;
@@ -526,7 +540,9 @@ int gx_gl_validate_xf(SDL_Renderer* renderer,const GXGLTransform* transform,cons
 void gx_gl_clear_depth(SDL_Renderer* renderer,int x,int y,int w,int h,u32 value) {
     if(!gx_gl_available(renderer))return;
     SDL_RenderFlush(renderer);ensure_depth();glPushAttrib(GL_DEPTH_BUFFER_BIT|GL_SCISSOR_BIT);
-    glEnable(GL_SCISSOR_TEST);glScissor(x,y,w,h);glDepthMask(GL_TRUE);glClearDepth((double)(value&0xFFFFFFu)/16777215.0);glClear(GL_DEPTH_BUFFER_BIT);glPopAttrib();
+    int sx=(int)(x*s_internal_scale+0.5f),sy=(int)(y*s_internal_scale+0.5f);
+    int sw=(int)(w*s_internal_scale+0.5f),sh=(int)(h*s_internal_scale+0.5f);
+    glEnable(GL_SCISSOR_TEST);glScissor(sx,sy,sw,sh);glDepthMask(GL_TRUE);glClearDepth((double)(value&0xFFFFFFu)/16777215.0);glClear(GL_DEPTH_BUFFER_BIT);glPopAttrib();
 }
 static bool copy_procs_available(void){
     if(!s_copy_procs_checked){
@@ -542,7 +558,7 @@ bool gx_gl_copy_color(SDL_Renderer* renderer,SDL_Texture* destination,const SDL_
     if(!source || !destination || source->x<0 || source->y<0 || source->w<=0 || source->h<=0 || !gx_gl_available(renderer))return false;
     SDL_Texture* origin=SDL_GetRenderTarget(renderer);int sw,sh,dw,dh;
     if(!origin || origin==destination || SDL_QueryTexture(origin,NULL,NULL,&sw,&sh)!=0 || SDL_QueryTexture(destination,NULL,NULL,&dw,&dh)!=0 ||
-       dw!=source->w || dh!=source->h || source->x>sw-dw || source->y>sh-dh)return false;
+       dw!=source->w || dh!=source->h || source->x+source->w>640 || source->y+source->h>528)return false;
     if(!copy_procs_available())return false;
     SDL_RenderFlush(renderer);GLint read_fbo,draw_fbo,texture,active;
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read_fbo);glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw_fbo);
@@ -556,9 +572,11 @@ bool gx_gl_copy_color(SDL_Renderer* renderer,SDL_Texture* destination,const SDL_
         copyBind(GL_DRAW_FRAMEBUFFER,s_copy_fbo);copyAttach(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,(GLuint)image,0);glDrawBuffer(GL_COLOR_ATTACHMENT0);
         if(copyCheck(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE){
             copyBind(GL_READ_FRAMEBUFFER,(GLuint)draw_fbo);glReadBuffer(GL_COLOR_ATTACHMENT0);
-            // SDL render targets use the same logical row order as decoded
-            // static textures. No CPU flip or intermediate pixel buffer.
-            copyBlit(source->x,source->y,source->x+dw,source->y+dh,0,0,dw,dh,GL_COLOR_BUFFER_BIT,GL_NEAREST);copied=true;s_stats.vram_copies++;
+            int srcX0 = (int)(source->x * s_internal_scale + 0.5f);
+            int srcY0 = (int)(source->y * s_internal_scale + 0.5f);
+            int srcX1 = (int)((source->x + dw) * s_internal_scale + 0.5f);
+            int srcY1 = (int)((source->y + dh) * s_internal_scale + 0.5f);
+            copyBlit(srcX0,srcY0,srcX1,srcY1,0,0,dw,dh,GL_COLOR_BUFFER_BIT,s_internal_scale>1.0f ? GL_LINEAR : GL_NEAREST);copied=true;s_stats.vram_copies++;
         }
         copyAttach(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,0,0);
         copyBind(GL_READ_FRAMEBUFFER,(GLuint)read_fbo);copyBind(GL_DRAW_FRAMEBUFFER,(GLuint)draw_fbo);
@@ -570,7 +588,7 @@ bool gx_gl_copy_texture(SDL_Renderer* renderer,SDL_Texture* destination,const SD
     if(!source || !destination || format>12 || (step!=1 && step!=2) || source->x<0 || source->y<0 || source->w<=0 || source->h<=0 || !gx_gl_available(renderer) || !copy_procs_available())return false;
     SDL_Texture* origin=SDL_GetRenderTarget(renderer);int sw,sh,dw,dh;
     if(!origin || origin==destination || SDL_QueryTexture(origin,NULL,NULL,&sw,&sh)!=0 || SDL_QueryTexture(destination,NULL,NULL,&dw,&dh)!=0 ||
-       dw!=source->w/(int)step || dh!=source->h/(int)step || source->x>sw-source->w || source->y>sh-source->h)return false;
+       dw!=source->w/(int)step || dh!=source->h/(int)step || source->x+source->w>640 || source->y+source->h>528)return false;
     if(!s_copy_program){
         if(s_copy_init<0)return false;s_copy_init=-1;
         static const char* vertex="#version 120\nvoid main(){gl_Position=gl_Vertex;}";
@@ -607,11 +625,12 @@ bool gx_gl_copy_texture(SDL_Renderer* renderer,SDL_Texture* destination,const SD
         GLint image;glGetIntegerv(GL_TEXTURE_BINDING_2D,&image);SDL_GL_UnbindTexture(destination);
         if(u==1.0f && v==1.0f && SDL_GL_BindTexture(origin,&u,&v)==0){
             GLint min_filter,mag_filter;glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,&min_filter);glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&mag_filter);
-            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+            GLint filter = s_internal_scale > 1.0f ? GL_LINEAR : GL_NEAREST;
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,filter);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,filter);
             if(!s_copy_fbo)copyGen(1,&s_copy_fbo);copyBind(GL_DRAW_FRAMEBUFFER,s_copy_fbo);copyAttach(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,(GLuint)image,0);glDrawBuffer(GL_COLOR_ATTACHMENT0);
             if(copyCheck(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE){
                 glViewport(0,0,dw,dh);glDisable(GL_BLEND);glDisable(GL_DEPTH_TEST);glDisable(GL_SCISSOR_TEST);glDisable(GL_ALPHA_TEST);glDisable(GL_STENCIL_TEST);glDisable(GL_CULL_FACE);glDisable(GL_COLOR_LOGIC_OP);glDisable(GL_DITHER);glDisable(GL_CLIP_PLANE0);glDisable(GL_CLIP_PLANE1);glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
-                GLfloat rect[4]={(float)source->x,(float)source->y,(float)source->w,(float)source->h},info[4]={(float)step,(float)format,luma ? 1.0f:0.0f,0},scale[4]={u/sw,v/sh,0,0};
+                GLfloat rect[4]={(float)source->x,(float)source->y,(float)source->w,(float)source->h},info[4]={(float)step,(float)format,luma ? 1.0f:0.0f,0},scale[4]={u/640.0f,v/528.0f,0,0};
                 gUseProgram(s_copy_program);gUniform1i(s_copy_sampler,0);gUniform4fv(s_copy_rect,1,rect);gUniform4fv(s_copy_info,1,info);gUniform4fv(s_copy_scale,1,scale);
                 glBegin(GL_TRIANGLE_STRIP);glVertex2f(-1,-1);glVertex2f(1,-1);glVertex2f(-1,1);glVertex2f(1,1);glEnd();copied=true;s_stats.vram_copies++;
             }
@@ -673,7 +692,9 @@ bool gx_gl_pack_yuy2(SDL_Renderer* renderer,SDL_Texture* efb,const SDL_Rect* sou
         glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
         gUseProgram(s_pack_program);gUniform1i(s_pack_efb,0);
         GLfloat rect[4]={(float)source->x,(float)source->y,(float)source->w,(float)source->h};
-        GLfloat scale[4]={tex_w/(float)image_w,tex_h/(float)image_h,(float)output_height,0};
+        float ref_w = (image_w > (int)source->w && abs(image_w - (int)(640.0f * s_internal_scale + 0.5f)) <= 2) ? 640.0f : (float)source->w;
+        float ref_h = (image_h > (int)source->h && abs(image_h - (int)(528.0f * s_internal_scale + 0.5f)) <= 2) ? 528.0f : (float)source->h;
+        GLfloat scale[4]={tex_w/ref_w,tex_h/ref_h,(float)output_height,0};
         gUniform4fv(s_pack_rect,1,rect);gUniform4fv(s_pack_scale,1,scale);
         glBegin(GL_TRIANGLE_STRIP);glVertex2f(-1,-1);glVertex2f(1,-1);glVertex2f(-1,1);glVertex2f(1,1);glEnd();
         ok=SDL_RenderReadPixels(renderer,NULL,SDL_PIXELFORMAT_RGBA32,output,(int)pitch)==0;

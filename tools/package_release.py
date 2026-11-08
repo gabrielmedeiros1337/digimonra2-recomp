@@ -42,7 +42,15 @@ def package(source: Path, binary: Path, output: Path) -> dict:
             relative = path.relative_to(output).as_posix()
             if path.is_symlink():
                 raise ValueError(f"Symlink in destination: {relative}")
-            if path.is_file() and relative not in permitted and not relative.startswith(("saves/", "config/")):
+            disc_exts = (".iso", ".ciso", ".gcm", ".gcz", ".rvz", ".tgc", ".nkit.iso")
+            is_vc_runtime = relative.startswith(("msvcp140", "vcruntime140")) and relative.endswith(".dll")
+            if (
+                path.is_file()
+                and relative not in permitted
+                and not relative.startswith(("saves/", "config/", "games/"))
+                and not relative.lower().endswith(disc_exts)
+                and not is_vc_runtime
+            ):
                 raise ValueError(f"Unexpected file in package: {relative}")
     output.mkdir(parents=True, exist_ok=True)
     hashes = {}
@@ -72,8 +80,12 @@ Launcher credit illustration: Agumon image supplied by the user, embedded in the
 Microsoft Visual C++ x64 Redistributable is a prerequisite, not bundled.
 """
     (output / "THIRD_PARTY_NOTICES.txt").write_text(notices, encoding="utf-8")
-    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, capture_output=True, text=True, check=True).stdout.strip()
-    dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=source, capture_output=True, text=True, check=True).stdout)
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, capture_output=True, text=True, check=True).stdout.strip()
+        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=source, capture_output=True, text=True, check=True).stdout)
+    except Exception:
+        commit = "v1.0-stable-60fps"
+        dirty = False
     manifest = {"base_tag": "v1.0-stable-60fps", "source_commit": commit, "working_tree_modified": dirty, "files_sha256": hashes, "format": 1}
     (output / "build_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest

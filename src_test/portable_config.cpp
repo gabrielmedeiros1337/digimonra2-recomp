@@ -11,7 +11,7 @@ namespace fs=std::filesystem;
 static fs::path path8(const char* s){return fs::path(std::u8string(reinterpret_cast<const char8_t*>(s)));}
 const char* const launcher_key_names[KEY_BIND_COUNT]={"A","B","X","Y","Z","Start","L","R","Stick Up","Stick Down","Stick Left","Stick Right","D-Pad Up","D-Pad Down","D-Pad Left","D-Pad Right","C-Stick Up","C-Stick Down","C-Stick Left","C-Stick Right"};
 void launcher_config_defaults(LauncherConfig* c){
-    memset(c,0,sizeof(*c));c->keyboard_enabled=true;
+    memset(c,0,sizeof(*c));c->keyboard_enabled=true;c->window_resolution=1;c->internal_resolution=0;
     strcpy_s(c->ports[0],"keyboard");for(int i=1;i<4;i++)strcpy_s(c->ports[i],"none");
     const int keys[KEY_BIND_COUNT]={SDL_SCANCODE_Z,SDL_SCANCODE_X,SDL_SCANCODE_C,SDL_SCANCODE_V,SDL_SCANCODE_TAB,SDL_SCANCODE_RETURN,SDL_SCANCODE_Q,SDL_SCANCODE_E,SDL_SCANCODE_W,SDL_SCANCODE_S,SDL_SCANCODE_A,SDL_SCANCODE_D,SDL_SCANCODE_UP,SDL_SCANCODE_DOWN,SDL_SCANCODE_LEFT,SDL_SCANCODE_RIGHT,SDL_SCANCODE_I,SDL_SCANCODE_K,SDL_SCANCODE_J,SDL_SCANCODE_L};
     memcpy(c->keys,keys,sizeof(keys));
@@ -43,6 +43,8 @@ bool launcher_config_load(const char* p,LauncherConfig* c,char* error,size_t cap
     auto& o=root.get<picojson::object>();
     if(o.count("vsync")){if(!o["vsync"].is<bool>())return fail(error,cap,"Invalid VSync setting.");v.vsync=o["vsync"].get<bool>();}
     if(o.count("window_mode")){auto& m=o["window_mode"];if(!m.is<double>()||m.get<double>()<0||m.get<double>()>2||floor(m.get<double>())!=m.get<double>())return fail(error,cap,"Invalid window mode.");v.window_mode=int(m.get<double>());}
+    if(o.count("window_resolution")){auto& r=o["window_resolution"];if(!r.is<double>()||r.get<double>()<0||r.get<double>()>6||floor(r.get<double>())!=r.get<double>())return fail(error,cap,"Invalid window resolution.");v.window_resolution=int(r.get<double>());}
+    if(o.count("internal_resolution")){auto& r=o["internal_resolution"];if(!r.is<double>()||r.get<double>()<0||r.get<double>()>4||floor(r.get<double>())!=r.get<double>())return fail(error,cap,"Invalid internal resolution.");v.internal_resolution=int(r.get<double>());}
     auto get=[&](const char* key)->const picojson::value&{static picojson::value nil;auto it=o.find(key);return it==o.end()?nil:it->second;};
     if(!get("image_path").is<std::string>()||get("image_path").get<std::string>().size()>=sizeof(v.image_path))return fail(error,cap,"Invalid image_path.");
     strcpy_s(v.image_path,get("image_path").get<std::string>().c_str());
@@ -58,6 +60,8 @@ bool launcher_config_save(const char* p,const LauncherConfig* c,char* e,size_t c
     picojson::object o;o["version"]=picojson::value(1.0);o["image_path"]=picojson::value(std::string(c->image_path));o["keyboard_enabled"]=picojson::value(c->keyboard_enabled);o["keyboard_port"]=picojson::value(double(c->keyboard_port));
     o["vsync"]=picojson::value(c->vsync);
     o["window_mode"]=picojson::value(double(c->window_mode));
+    o["window_resolution"]=picojson::value(double(c->window_resolution));
+    o["internal_resolution"]=picojson::value(double(c->internal_resolution));
     picojson::array ports,keys;for(auto& s:c->ports)ports.emplace_back(std::string(s));for(int k:c->keys)keys.emplace_back(double(k));o["ports"]=picojson::value(ports);o["keys"]=picojson::value(keys);
     std::string text=picojson::value(o).serialize(true);if(!portable_write_atomic(p,text.data(),text.size()))return fail(e,cap,"Cannot save configuration (check folder permissions).");return true;
 }

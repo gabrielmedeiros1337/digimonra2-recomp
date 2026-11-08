@@ -2,6 +2,8 @@
   "version": 1,
   "vsync": false,
   "window_mode": 0,
+  "window_resolution": 1,
+  "internal_resolution": 0,
   "image_path": "",
   "keyboard_enabled": true,
   "keyboard_port": 0,

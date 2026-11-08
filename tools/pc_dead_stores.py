@@ -217,8 +217,8 @@ def main():
         text,memory_calls=rewrite_memory(text);out,count,examples=transform(text);out,regions=chunk_segments.transform(out);out,functions=qualify_functions(out);out,cycles=consolidate_cycles(out)
         owner=int(re.search(r'_([0-9A-Fa-f]{8})$',source.stem)[1],16)
         direct=0 # Cross-chunk transfers always return to the flat executor.
-        # Generated source uses a relative include; the build copy uses its absolute original.
-        out=out.replace('#include "../generated.h"', '#include "'+(a.source.parent/'generated.h').resolve().as_posix()+'"')
+        # Generated source uses a relative include; the build copy uses include-dir resolution.
+        out=out.replace('#include "../generated.h"', '#include "generated.h"')
         out='#include "chunk_memory.h"\n'+out
         target=a.output/source.name
         encoded=out.encode()

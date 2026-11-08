@@ -74,6 +74,8 @@ bool gx_pipe_set_vram_only(CPUState* cpu,bool enabled);
 bool gx_pipe_vram_only(void);
 void gx_pipe_vram_diagnostics(u64* copies,u64* materializations,u32* pending);
 bool gx_pipe_set_xfb_vram(CPUState* cpu,bool enabled);
+void gx_pipe_set_internal_scale(float scale);
+float gx_pipe_get_internal_scale(void);
 bool gx_pipe_present_xfb(struct SDL_Renderer* renderer,u32 address,const SDL_Rect* dest);
 void gx_pipe_xfb_diagnostics(u64* copies,u64* resolves);
 u64 gx_pipe_get_total_bytes(void);

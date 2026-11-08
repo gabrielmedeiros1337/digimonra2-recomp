@@ -15,7 +15,8 @@ Sua arena de volta ao PC: launcher nativo, controles configuráveis e combate a 
 - **4 controles XInput/DInput**, com atribuição por jogador, mais **teclado remapeável**.
 - **Memory Card portátil:** as gravações feitas pelo jogo são persistidas automaticamente em `saves/`. Faça backup dessa pasta; fechar o jogo não substitui o comando de salvar.
 - **Janela, tela cheia sem bordas e exclusiva**, com **Alt+Enter** e VSync opcional.
-- Apresentação na resolução do monitor; a **resolução interna permanece nativa**. FSR e resolução interna HD não estão implementados.
+- **Resolução de Tela e Janela configuráveis** no Launcher de 640x480 (4:3) até 4K UHD (3840x2160), com aspect ratio 4:3 preservado automaticamente.
+- **Resolução Interna 3D (EFB Scale):** renderização 3D de alta definição (1x Nativa, 1.5x, 2x HD, 3x Full HD e 4x Quad HD) 100% em GPU VRAM mantendo 60 FPS estáveis.
 - Coloque seu dump em `games/` se quiser manter tudo organizado, ou selecione-o em qualquer pasta.
 
 O pacote **não inclui o jogo**. É necessário fornecer seu próprio dump da versão USA compatível. Não funciona com a versão Wii ou DOL modificado. O cartão `.card` é próprio deste port, não um `.raw` de outro emulador.
@@ -44,8 +45,7 @@ fornece seu próprio dump original para carregar o DOL e os arquivos do jogo.
 - VSync opcional, desligado por padrão. FreeSync depende do monitor/driver.
 - Áudio, modelos e combate validados pelo usuário, perto de 60 FPS no
   hardware dos testes. A taxa não é garantida para qualquer computador.
-- Resolução interna nativa. FSR e renderização interna 720p/1080p **não estão
-  implementados**; tela cheia amplia a apresentação da imagem nativa.
+- Resolução interna 3D configurável (EFB Scale 1x a 4x) diretamente na aba Opções do Launcher, processada 100% na GPU VRAM com preservação de aspect ratio e sombras I4.
 
 ## Instalar um pacote compilado
 

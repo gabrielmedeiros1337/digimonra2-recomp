@@ -1086,11 +1086,37 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    static const struct { int w, h; } s_window_res_table[] = {
+        {640, 480}, {1280, 720}, {1366, 768}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3840, 2160}
+    };
+    static const float s_internal_res_table[] = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
+    int win_w = 1280, win_h = 720;
+    if(launch_config.window_resolution >= 0 && launch_config.window_resolution < (int)(sizeof(s_window_res_table)/sizeof(s_window_res_table[0]))){
+        win_w = s_window_res_table[launch_config.window_resolution].w;
+        win_h = s_window_res_table[launch_config.window_resolution].h;
+    }
+    float efb_scale = 1.0f;
+    if(launch_config.internal_resolution >= 0 && launch_config.internal_resolution < (int)(sizeof(s_internal_res_table)/sizeof(s_internal_res_table[0]))){
+        efb_scale = s_internal_res_table[launch_config.internal_resolution];
+    }
+    for(int i=1;i<argc;i++){
+        if(!strcmp(argv[i],"--window-res") && i+1<argc){
+            int idx = atoi(argv[++i]);
+            if(idx >= 0 && idx < 7){ win_w = s_window_res_table[idx].w; win_h = s_window_res_table[idx].h; }
+        }
+        if(!strcmp(argv[i],"--internal-scale") && i+1<argc){
+            efb_scale = (float)atof(argv[++i]);
+        }
+    }
+    gx_pipe_set_internal_scale(efb_scale);
+    printf("[Video Configuration] Window: %dx%d, Internal EFB scale: %.2fx (%dx%d)\n",
+           win_w, win_h, efb_scale, (int)(640.0f * efb_scale + 0.5f), (int)(528.0f * efb_scale + 0.5f));
+
     SDL_Window* window = SDL_CreateWindow(
         "Digimon Rumble Arena 2 - PC Port (Native Recompilation)",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        1280, 720,
+        win_w, win_h,
         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
 
@@ -1154,6 +1180,7 @@ int main(int argc, char** argv) {
     // Initialize GX GPU Pipeline (Command Processor & Gather Pipe)
     gx_pipe_init(&cpu);
     gx_pipe_set_renderer(renderer);
+    gx_pipe_set_xfb_vram(&cpu, true);
 
     cpu.instruction_fallback = handle_instruction_fallback;
     cpu.spr_read=platform_spr_read;cpu.spr_write=platform_spr_write;
@@ -1216,7 +1243,7 @@ int main(int argc, char** argv) {
         bool continuing=guest_budget.open;
         bool managed_frame=in_combat || continuing;
         if(gx_frame_active() && (!in_combat || !frame_pipeline_requested)){if(!gx_pipe_frame_stop(&cpu)){running=false;break;}}
-        gx_pipe_set_xfb_vram(&cpu,xfb_vram_requested && s_scene_address && mem_read32(&cpu,s_scene_address+8)==4);
+        gx_pipe_set_xfb_vram(&cpu,xfb_vram_requested);
         if(in_combat && frame_pipeline_requested && !gx_frame_active())gx_pipe_frame_start(&cpu,window);
         if(!continuing){s_total_frames++;s_current_frame_num++;}
 
@@ -1448,7 +1475,7 @@ int main(int argc, char** argv) {
                     gx_pipe_set_gpu_xf(gpu_xf!=0);
                     gx_pipe_set_image_versions(&cpu,image_versions!=0);gx_pipe_set_async_decode(async_decode!=0);
                     fast_float_requested=fast_float!=0;gx_pipe_set_dirty_tracking(dirty_tracking!=0);
-                    xfb_vram_requested=xfb_vram!=0;gx_pipe_set_decode_cache(decode_cache!=0);
+                    xfb_vram_requested=xfb_vram!=0;gx_pipe_set_xfb_vram(&cpu,xfb_vram_requested);gx_pipe_set_decode_cache(decode_cache!=0);
                     gx_pipe_set_vram_only(&cpu,vram_only!=0);gx_gl_set_geometry_cache(geometry_cache!=0);
                     }
                 }

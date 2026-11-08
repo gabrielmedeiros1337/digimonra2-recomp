@@ -62,9 +62,9 @@ aos detentores da marca Digimon. Use seu próprio dump do jogo.
 ABAS DO LAUNCHER
 Jogar: dump original, botão JOGAR e acesso aos saves.
 Controles: portas 1–4, dispositivos e mapeamento de teclado.
-Opções: VSync opcional (OFF por padrão, aplicado na próxima abertura).
+Opções: Resolução da janela (640x480 até 4K UHD), Resolução interna 3D / EFB Scale
+(1x Nativa até 4x Quad HD na GPU), VSync opcional e Modo de tela.
 FreeSync/VRR permanece sob controle do monitor/driver; o jogo continua a 60 FPS.
-FSR não está implementado e aparece explicitamente como indisponível.
 Créditos: agradecimento, Agumon e link clicável para o repositório.
 
 MODO DE TELA / ALT+ENTER
