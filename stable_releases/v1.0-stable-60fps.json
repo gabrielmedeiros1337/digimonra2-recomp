@@ -1,0 +1,66 @@
+{
+  "tag": "v1.0-stable-60fps",
+  "date": "2026-11-08",
+  "source_revision": "v1.0-stable-60fps^{commit}",
+  "executable_sha256": "ECEA9F470B2AFFE7B207C80899CDEBC74DA7040F8B19A87757148C9A5B2C9959",
+  "map_sha256": "5B582F1A9737EDFCE6B0DA0A53FAFBB8DF4F56DB780F01A9ACEB6AC0F51226FF",
+  "sdl2_sha256": "EE2A49A5B731B6A8D955AB3BC4E7C86AF57006AADC72F5362916E26AE3BB7B44",
+  "artifact_directory": "build_test/stable_release/v1.0-stable-60fps",
+  "tests_passed": 19,
+  "public_max_stack_bytes": 72,
+  "production_max_stack_bytes": 168,
+  "chunk_chkstk_prologues": 0,
+  "text_mib": 47.883033752441406,
+  "user_validation": "60 FPS na maior parte do combate; minimas pontuais de58FPS nas transicoes pesadas de digivolucao",
+  "submodules": [
+    {
+      "path": "ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Externals/cubeb/cubeb/googletest",
+      "commit": "52cdc6fc0bff18789e802702e3e91184e234c886",
+      "tag_object": "319a56bf2f4a59e200b921773e58dd93565a6452"
+    },
+    {
+      "path": "ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Externals/cubeb/cubeb",
+      "commit": "6660c92f32ad31657ec3f52ac637e8b667359e7a",
+      "tag_object": "5621c9893c3e269d1370366f4da8e6e6825017e2"
+    },
+    {
+      "path": "ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Externals/spirv_cross/SPIRV-Cross",
+      "commit": "544c2147ef25f4ab36ea4a1874b9245c0c28dbfd",
+      "tag_object": "27a66ecefbb601f7319ab742505d6c56f704b0d2"
+    },
+    {
+      "path": "ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Externals/xxhash/xxHash",
+      "commit": "e626a72bc2321cd320e953a0ccf1584cad60f363",
+      "tag_object": "2093da3dde73b9ca78fe002eae9f7c1615992dea"
+    },
+    {
+      "path": "ModernGekko-Template/lib/DolRecomp",
+      "commit": "137fe4c092f38b0f3f11b958add025e54485fca0",
+      "tag_object": "d33555217c3198efc22ab14e8256f30fa5e75580"
+    },
+    {
+      "path": "ModernGekko-Template/lib/ModernGekko/vendor/dolphin",
+      "commit": "bab05863dfdf3cb7ec4380b85e46d257d2c81978",
+      "tag_object": "49b9c56469c4334ff42d85acfc53a7a1201f93e9"
+    },
+    {
+      "path": "ModernGekko-Template/lib/ModernGekko",
+      "commit": "eb6b3501dc57693c79f608ce9bea41489f873983",
+      "tag_object": "9e471448f863ec31e5c5b82e8824695b67b16c5f"
+    },
+    {
+      "path": "ModernGekko-Template",
+      "commit": "94a1df5bc68b9ec8b047299b19f607e27ed9e9ff",
+      "tag_object": "714dc9ccd639cb198af4bbbdf73f9d1b8cf3e77c"
+    }
+  ],
+  "configuration": {
+    "quantum": 1024,
+    "downcount_initial": 768,
+    "downcount_limit": -256,
+    "arenas": 3,
+    "pgo": "OFF",
+    "recursive_chunk_calls": false
+  },
+  "documentation": "STABLE_BUILD_NOTES.md"
+}

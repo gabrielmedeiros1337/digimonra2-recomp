@@ -35,10 +35,16 @@ bool input_init(void);
 
 // Polls keyboard and connected controllers, updating current pad state
 void input_poll(void);
-void input_inject_button(u16 button_mask);
+void input_handle_event(const SDL_Event* event);
 const NativePadState* input_get_pad(int idx);
+void input_bind_frame(const NativePadState* physical_snapshot);
 
-// Serial Interface (SI) MMIO register handlers (0xCC006800 - 0xCC006838)
+// Pure keyboard mapping and PADStatus serialization (also used by contracts).
+// Returns true when Shift is used for a player 2..4 Start chord.
+bool input_map_extra_keys(const Uint8* keys,bool focused,NativePadState pads[4]);
+u32 input_store_pad_status(CPUState* cpu,u32 address,const NativePadState pads[4]);
+
+// Serial Interface (SI) MMIO register handlers (0xCC006400 - 0xCC006438)
 u32 input_read_si(CPUState* cpu, u32 reg_offset);
 void input_write_si(CPUState* cpu, u32 reg_offset, u32 val);
 

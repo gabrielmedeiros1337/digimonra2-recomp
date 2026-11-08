@@ -31,3 +31,9 @@ Debug/
 *.zip
 *.7z
 *.rar
+
+# Generated Python/tool/inventory artifacts (sources remain versioned)
+__pycache__/
+*.py[cod]
+/tools/sample_stacks.exe
+/symbol_inventory_report.txt

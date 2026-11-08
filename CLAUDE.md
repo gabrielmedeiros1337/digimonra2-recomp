@@ -20,8 +20,8 @@
 # Inventário de símbolos:
 python tools/symbol_inventory.py
 
-# Executar (com confirmação automática de telas):
-$env:TEST_AUTO_CONFIRM="1"; .\build_test\Release\digimon_test.exe
+# Executar (input físico; confirmar os prompts na janela):
+.\build_test\Release\digimon_test.exe
 ```
 
 ## Convenções do projeto
