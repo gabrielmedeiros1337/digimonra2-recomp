@@ -37,7 +37,7 @@ def package(source: Path, binary: Path, output: Path) -> dict:
     if output.exists():
         if not (output / "build_manifest.json").is_file():
             raise ValueError("Refusing to replace an unknown directory")
-        permitted = set(files) | {"build_manifest.json", "THIRD_PARTY_NOTICES.txt", "saves/.keep"}
+        permitted = set(files) | {"build_manifest.json", "THIRD_PARTY_NOTICES.txt", "saves/.keep", "games/.keep"}
         for path in output.rglob("*"):
             relative = path.relative_to(output).as_posix()
             if path.is_symlink():
@@ -55,6 +55,8 @@ def package(source: Path, binary: Path, output: Path) -> dict:
             shutil.copy2(path, temporary)
             temporary.replace(target)
         hashes[relative] = hashlib.sha256(target.read_bytes()).hexdigest()
+    (output / "games").mkdir(exist_ok=True)
+    (output / "games/.keep").touch(exist_ok=True)
     (output / "saves").mkdir(exist_ok=True)
     (output / "saves/.keep").touch(exist_ok=True)
     notices = """Third-party components

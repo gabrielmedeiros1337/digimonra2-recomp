@@ -1,3 +1,32 @@
+# Digimon Rumble Arena 2 — PC Port
+
+Sua arena de volta ao PC: launcher nativo, controles configuráveis e combate a **60 FPS nativos** no hardware validado. O desempenho pode variar conforme o computador.
+
+## Como jogar — apenas 3 passos
+
+1. Vá em **[Releases](../../releases/latest)** e baixe **`DigimonRA2_PC_v1.0_Windows_x64.zip`**.
+2. Extraia o ZIP inteiro em uma pasta com permissão de escrita e abra **`DigimonRA2.exe`** dentro de `DigimonRA2_PC/`.
+3. Clique em **Procurar**, selecione sua **ISO/CISO/RVZ de Digimon Rumble Arena 2 (USA / GameCube)**, configure os controles ou teclado e clique em **JOGAR**!
+
+**Não precisa instalar Visual Studio, CMake ou Python para jogar.** Windows 10/11 x64 e driver gráfico OpenGL do fabricante são necessários. As DLLs do runtime C++ acompanham o pacote.
+
+## Pronto para a batalha
+
+- **4 controles XInput/DInput**, com atribuição por jogador, mais **teclado remapeável**.
+- **Memory Card portátil:** as gravações feitas pelo jogo são persistidas automaticamente em `saves/`. Faça backup dessa pasta; fechar o jogo não substitui o comando de salvar.
+- **Janela, tela cheia sem bordas e exclusiva**, com **Alt+Enter** e VSync opcional.
+- Apresentação na resolução do monitor; a **resolução interna permanece nativa**. FSR e resolução interna HD não estão implementados.
+- Coloque seu dump em `games/` se quiser manter tudo organizado, ou selecione-o em qualquer pasta.
+
+O pacote **não inclui o jogo**. É necessário fornecer seu próprio dump da versão USA compatível. Não funciona com a versão Wii ou DOL modificado. O cartão `.card` é próprio deste port, não um `.raw` de outro emulador.
+
+Teclas padrão: **Z/X/C/V** = A/B/X/Y, **Enter** = Start, **WASD** = analógico, **setas** = D-Pad, **Q/E** = L/R, **Tab** = Z. **Esc** fecha o jogo.
+
+Obrigado por baixar e voltar à arena com a gente!
+
+<details>
+<summary>Instruções avançadas para Desenvolvedores (Compilação)</summary>
+
 # Digimon Rumble Arena 2 — PC nativo
 
 Recompilação estática da versão **GameCube USA** para **Windows x64**, com
@@ -187,8 +216,8 @@ Nenhum botão é pressionado automaticamente.
 contém o código estático protegido; `tools/` contém os pós-processadores e
 verificações; `third_party/recomp-deps/` guarda o runtime e codecs reproduzíveis.
 
-Veja [STABLE_BUILD_NOTES.md](STABLE_BUILD_NOTES.md),
-[USABILITY_RELEASE_NOTES.md](USABILITY_RELEASE_NOTES.md) e
+Veja [STABLE_BUILD_NOTES.md](docs/reports/STABLE_BUILD_NOTES.md),
+[USABILITY_RELEASE_NOTES.md](docs/reports/USABILITY_RELEASE_NOTES.md) e
 [third_party/DEPENDENCIES.md](third_party/DEPENDENCIES.md).
 As implementações CPU/GX/timing/chunks foram mantidas na organização das
 dependências; os arquivos do snapshot são conferidos por SHA-256.
@@ -196,3 +225,8 @@ dependências; os arquivos do snapshot são conferidos por SHA-256.
 As dependências preservam suas licenças nos diretórios e no pacote. A ilustração
 do Agumon foi fornecida pelo usuário. Este projeto não é afiliado aos detentores
 de Digimon; não redistribua seu dump junto do pacote.
+
+
+Relatórios históricos: [docs/reports](docs/reports/).
+
+</details>
