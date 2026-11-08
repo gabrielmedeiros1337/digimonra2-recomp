@@ -4,7 +4,7 @@ Sua arena de volta ao PC: launcher nativo, controles configuráveis e combate a 
 
 ## Como jogar — apenas 3 passos
 
-1. Vá em **[Releases](../../releases/latest)** e baixe **`DigimonRA2_PC_v1.0_Windows_x64.zip`**.
+1. Vá em **[Releases](../../releases/latest)** e baixe o arquivo ZIP.
 2. Extraia o ZIP inteiro em uma pasta com permissão de escrita e abra **`DigimonRA2.exe`** dentro de `DigimonRA2_PC/`.
 3. Clique em **Procurar**, selecione sua **ISO/CISO/RVZ de Digimon Rumble Arena 2 (USA / GameCube)**, configure os controles ou teclado e clique em **JOGAR**!
 
