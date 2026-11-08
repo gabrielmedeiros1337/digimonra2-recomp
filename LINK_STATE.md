@@ -636,3 +636,15 @@ Release D5797F407BDC4746D28F5A1724FD8E60A497AA631B6199D1D75D16B0F8E814C9. Remove
 ## Flat segmented chunks / verified stack - 2026-11-08
 
 Release ECEA9F470B2AFFE7B207C80899CDEBC74DA7040F8B19A87757148C9A5B2C9959. Removed recursive cross-chunk C edges/cpu_direct; flat executor and FIFO-no-fence retained. Build-only control-equivalent split185large bodies into23677small noinline regions,2824small functions preserved; flow address private, never CPUState.pc scratch. No HLE/FP/clock/budget semantics changes. Linked PE verifies185public wrappers,max72bytes; all production region/loop frames max168bytes vs168968; chkstk prologues183->0. Postbuild enforces max4095/no chkstk. text143.886253->47.883034MiB. CTest19/19 including12288 exact control-flow/CPU/RAM cases; old tests and identical17-batch replay passed. Build0 no warnings; inventory216objects/116069map names. Original generated sources unchanged; PGO OFF. Lookup already compact O1 with offset-base/shift14; region tables O1. FLAT_STACK_REPORT.md and build_test/flat_regions_manifest.json. New combat960 measurement pending physical input, window21712 preserved.
+
+
+## Portable usability layer (isolated from stable-60fps)
+
+Branch codex/launcher-portable-save; build_test/usability. Native Win32 launcher,
+UTF-8 JSON controller configuration, ISO/CISO/NKit ISO/GC RVZ disc reader,
+portable Slot A CARD HLE with durable atomic saves/MemoryCardA.card.
+Packaging: cmake --build build_test/usability --config Release --target package_release
+creates DigimonRA2_PC from an explicit allowlist, no game data or development artifacts.
+Release build and 22/22 CTest passed; public chunk max stack 72 bytes, internal
+max 168 bytes, zero chkstk. CPU/GX/timing/codegen sources and stable executable
+remain unchanged. See USABILITY_RELEASE_NOTES.md for architecture and validation.

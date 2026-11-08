@@ -2,6 +2,7 @@
 #define DOL_LOADER_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include "cpu/cpu.h"
 
 typedef struct {
@@ -15,5 +16,7 @@ typedef struct {
 } DolMetadata;
 
 bool dol_load(const char* dol_path, CPUState* cpu, DolMetadata* meta_out);
+
+bool dol_load_memory(const void* data,size_t size,CPUState* cpu,DolMetadata* meta_out);
 
 #endif // DOL_LOADER_H

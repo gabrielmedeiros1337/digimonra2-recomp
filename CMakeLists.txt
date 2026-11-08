@@ -484,3 +484,5 @@ target_compile_definitions(chunk_stack_probe PRIVATE DOLRECOMP_RAM_TRACKING=0)
 if(MSVC)
     target_compile_options(chunk_stack_probe PRIVATE /O2 /Ob3 /Oi /GL- /FAs "/Fa${CMAKE_BINARY_DIR}/chunk_stack_probe.asm")
 endif()
+
+include(cmake/Usability.cmake)

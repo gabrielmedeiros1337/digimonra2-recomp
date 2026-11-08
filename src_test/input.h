@@ -3,6 +3,7 @@
 
 #include <SDL.h>
 #include <stdbool.h>
+#include "portable_config.h"
 #include "cpu/cpu.h"
 
 // Standard GameCube Controller Button Mask
@@ -31,6 +32,8 @@ typedef struct {
 } NativePadState;
 
 // Initializes GameController subsystem and opens any connected controllers
+void input_configure(const LauncherConfig* config);
+void input_apply_keyboard(const Uint8* keys,bool focused,const LauncherConfig* config,NativePadState pads[4]);
 bool input_init(void);
 
 // Polls keyboard and connected controllers, updating current pad state

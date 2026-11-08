@@ -1,4 +1,5 @@
 #include "dvd_vfs.h"
+#include "disc_image.h"
 #include "video_audio.h"
 #include "hle_callbacks.h"
 #include <SDL.h>
@@ -12,15 +13,9 @@
 #define BSWAP32(x) __builtin_bswap32(x)
 #endif
 
-static FILE* s_ciso_file = NULL;
+static DiscImage* s_image = NULL;
 static u32 s_fst_offset_iso = 0;
 static u32 s_fst_size_iso = 0;
-
-// CISO format metadata
-static bool s_is_ciso = false;
-static u32 s_ciso_block_size = 2097152;
-static u8 s_ciso_map[0x8000 - 8];
-static u32 s_ciso_block_positions[0x8000 - 8];
 
 // DVD Hardware Registers
 static u32 s_disr = 0;       // 0x00 Status
@@ -86,56 +81,8 @@ void dvd_vfs_pump(CPUState* cpu){
     }
 }
 
-static bool read_bytes_unlocked(u64 virtual_dvd_offset, void* dst, u32 length) {
-    if (!dst && length) return false;
-    if (!s_ciso_file) {
-        printf("[DVD VFS] ERRO: Tentativa de leitura sem arquivo ISO/CISO aberto!\n");
-        fflush(stdout);
-        return false;
-    }
-
-    static u32 s_read_log_count = 0;
-    if (s_read_log_count < 10) {
-        s_read_log_count++;
-        printf("[DVD VFS] Leitura de dados/FST: DVD Offset=0x%llX, Tamanho=%u bytes\n",
-               virtual_dvd_offset, length);
-        fflush(stdout);
-    }
-
-    if (!s_is_ciso) {
-#ifdef _MSC_VER
-        if (_fseeki64(s_ciso_file, (long long)virtual_dvd_offset, SEEK_SET) != 0) return false;
-#else
-        if (fseeko(s_ciso_file, virtual_dvd_offset, SEEK_SET) != 0) return false;
-#endif
-        return fread(dst, 1, length, s_ciso_file) == length;
-    }
-
-    u8* out = (u8*)dst;
-    while (length > 0) {
-        u32 block_idx = (u32)(virtual_dvd_offset / s_ciso_block_size);
-        u32 offset_in_block = (u32)(virtual_dvd_offset % s_ciso_block_size);
-        u32 chunk = s_ciso_block_size - offset_in_block;
-        if (chunk > length) chunk = length;
-
-        if (block_idx >= sizeof(s_ciso_map)) return false;
-        if (s_ciso_map[block_idx] == 1) {
-            u64 file_pos = 0x8000 + ((u64)s_ciso_block_positions[block_idx] * s_ciso_block_size) + offset_in_block;
-#ifdef _MSC_VER
-            if (_fseeki64(s_ciso_file, (long long)file_pos, SEEK_SET) != 0) return false;
-#else
-            if (fseeko(s_ciso_file, file_pos, SEEK_SET) != 0) return false;
-#endif
-            if (fread(out, 1, chunk, s_ciso_file) != chunk) return false;
-        } else {
-            memset(out, 0, chunk);
-        }
-
-        out += chunk;
-        virtual_dvd_offset += chunk;
-        length -= chunk;
-    }
-    return true;
+static bool read_bytes_unlocked(u64 offset,void* destination,u32 length) {
+    return disc_image_read(s_image,offset,destination,length);
 }
 bool dvd_vfs_read_bytes(u64 offset,void* destination,u32 length){
     if(s_io_mutex)SDL_LockMutex(s_io_mutex);bool ok=read_bytes_unlocked(offset,destination,length);if(s_io_mutex)SDL_UnlockMutex(s_io_mutex);return ok;
@@ -144,42 +91,9 @@ bool dvd_vfs_read_bytes(u64 offset,void* destination,u32 length){
 bool dvd_vfs_init(const char* ciso_path, CPUState* cpu) {
     dvd_vfs_shutdown();
 
-    s_ciso_file = fopen(ciso_path, "rb");
-    if (!s_ciso_file) {
-        fprintf(stderr, "[DVD VFS] ERRO: Nao foi possivel abrir '%s'\n", ciso_path);
-        return false;
-    }
+    char error[256];s_image=disc_image_open(ciso_path,error,sizeof(error));
+    if(!s_image){fprintf(stderr,"[DVD] %s\n",error);return false;}
     s_io_mutex=SDL_CreateMutex();if(!s_io_mutex){dvd_vfs_shutdown();return false;}
-
-    // Check if CISO
-    char magic[4];
-    if (fread(magic, 1, 4, s_ciso_file) == 4 && memcmp(magic, "CISO", 4) == 0) {
-        s_is_ciso = true;
-        u8 size_bytes[4];
-        if (fread(size_bytes, 1, 4, s_ciso_file) != 4 ||
-            fread(s_ciso_map, 1, sizeof(s_ciso_map), s_ciso_file) != sizeof(s_ciso_map)) {
-            dvd_vfs_shutdown(); return false;
-        }
-        s_ciso_block_size = (u32)size_bytes[0] | ((u32)size_bytes[1] << 8) |
-            ((u32)size_bytes[2] << 16) | ((u32)size_bytes[3] << 24);
-        if (!s_ciso_block_size || (s_ciso_block_size & (s_ciso_block_size - 1))) {
-            dvd_vfs_shutdown(); return false;
-        }
-
-        u32 cur_file_block = 0;
-        for (size_t i = 0; i < sizeof(s_ciso_map); i++) {
-            if (s_ciso_map[i] == 1) {
-                s_ciso_block_positions[i] = cur_file_block++;
-            } else {
-                s_ciso_block_positions[i] = 0xFFFFFFFFu;
-            }
-        }
-        printf("[DVD VFS] Imagem CISO detectada! Bloco=%u bytes, Blocos fisicos=%u\n",
-               s_ciso_block_size, cur_file_block);
-    } else {
-        s_is_ciso = false;
-        printf("[DVD VFS] Imagem ISO pura (1:1 RAW) detectada.\n");
-    }
 
     // Read FST offset and size from disc boot info (virtual DVD offset 0x424)
     s_fst_offset_iso = s_fst_size_iso = 0;
@@ -199,7 +113,7 @@ bool dvd_vfs_init(const char* ciso_path, CPUState* cpu) {
 }
 
 bool dvd_vfs_load_fst(CPUState* cpu, u32 fst_ram_target) {
-    if (!s_ciso_file || s_fst_size_iso == 0) return false;
+    if (!s_image || s_fst_size_iso == 0) return false;
 
     u32 ram_offset = fst_ram_target - GC_RAM_BASE;
     if (fst_ram_target < GC_RAM_BASE || ram_offset > cpu->ram_size || s_fst_size_iso > cpu->ram_size - ram_offset) {
@@ -302,10 +216,7 @@ void dvd_vfs_shutdown(void) {
     if(s_io_thread){SDL_LockMutex(s_job_mutex);s_stop=true;SDL_UnlockMutex(s_job_mutex);SDL_SemPost(s_job_ready);SDL_WaitThread(s_io_thread,NULL);s_io_thread=NULL;}
     if(s_job_mutex)SDL_DestroyMutex(s_job_mutex);if(s_job_ready)SDL_DestroySemaphore(s_job_ready);s_job_mutex=NULL;s_job_ready=NULL;
     for(u32 i=0;i<16;i++)free(s_jobs[i].data);memset(s_jobs,0,sizeof(s_jobs));s_head=s_tail=s_worker_next=s_count=0;SDL_AtomicSet(&s_completed,0);
-    if (s_ciso_file) {
-        fclose(s_ciso_file);
-        s_ciso_file = NULL;
-    }
+    if(s_image){disc_image_close(s_image);s_image=NULL;}
     if(s_io_mutex)SDL_DestroyMutex(s_io_mutex);s_io_mutex=NULL;
     s_di_pending=false;s_dicr=s_disr=s_dilength=0;video_set_di_interrupt(false);
 }

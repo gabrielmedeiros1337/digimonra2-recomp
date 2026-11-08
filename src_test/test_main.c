@@ -13,6 +13,10 @@
 #define DOLRECOMP_ENABLE_REPLACEMENTS
 #include "generated.h"
 #include "dol_loader.h"
+#include "portable_config.h"
+#include "disc_image.h"
+#include "card_hle.h"
+#include "card_store.h"
 #include "dvd_vfs.h"
 #include "video_audio.h"
 #include "input.h"
@@ -31,6 +35,7 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shellapi.h>
 static CPUState* s_crash_cpu;
 static LONG WINAPI log_host_exception(EXCEPTION_POINTERS* exception) {
     FILE* log=fopen("runtime_crash.log","a");
@@ -372,6 +377,42 @@ static int platform_dispatch_replacement(CPUState* ctx, u32 address) {
     // Exact PC selection avoids walking every HLE comparison on ordinary calls.
     // Each case retains the existing handler; unhandled PCs execute the guest.
     switch(address) {
+    /* Portable Slot A SDK services, outside the rendering/CPU pipeline. */
+    case 0x802A8A70u:
+    case 0x802A8B4Cu:
+    case 0x802A8D30u:
+    case 0x802A8D60u:
+    case 0x802A8F38u:
+    case 0x802A8FBCu:
+    case 0x802A9040u:
+    case 0x802AA114u:
+    case 0x802AA6A4u:
+    case 0x802AA6CCu:
+    case 0x802AA728u:
+    case 0x802AA89Cu:
+    case 0x802AA8D4u:
+    case 0x802AAF98u:
+    case 0x802AB138u:
+    case 0x802AB21Cu:
+    case 0x802ABAF4u:
+    case 0x802ABDC8u:
+    case 0x802ABF28u:
+    case 0x802AC0A0u:
+    case 0x802AC22Cu:
+    case 0x802AC44Cu:
+    case 0x802AC77Cu:
+    case 0x802AC8C4u:
+    case 0x802ACBB8u:
+    case 0x802ACCCCu:
+    case 0x802ACDB8u:
+    case 0x802ACEE4u:
+    case 0x802ACF2Cu:
+    case 0x802AD03Cu:
+    case 0x802AD27Cu:
+    case 0x802AD3A8u:
+    case 0x802AD51Cu:
+        return card_hle_dispatch(ctx,address);
+
     case 0x8028BEDCu:
     case 0x8028BF58u:
         if(sdk_vec_transform(ctx,false)){platform_continue_cpu_slice();return 1;}return 0;
@@ -1006,6 +1047,32 @@ int main(int argc, char** argv) {
     if ((argc==4 || argc==5) && strcmp(argv[1],"--gx-replay")==0) return gx_pipe_replay(argv[2],argv[3],argc==5 && strcmp(argv[4],"software")==0);
     if (argc==3 && strcmp(argv[1],"--lua-probe")==0) return platform_lua_probe(argv[2]);
     if (argc==7 && strcmp(argv[1],"--guest-call")==0) return platform_guest_call(argv[2],(u32)strtoul(argv[3],NULL,0),(u32)strtoul(argv[4],NULL,0),(u32)strtoul(argv[5],NULL,0),(u32)strtoul(argv[6],NULL,0));
+    bool portable_mode=false;
+    char selected_disc[LAUNCHER_PATH_MAX]={0};
+    for(int i=1;i<argc;i++)if(!strcmp(argv[i],"--portable"))portable_mode=true;
+#ifdef _WIN32
+    if(portable_mode){
+        int count=0;LPWSTR* args=CommandLineToArgvW(GetCommandLineW(),&count);
+        if(!args)return 1;
+        for(int i=1;i+1<count;i++)if(!wcscmp(args[i],L"--disc"))WideCharToMultiByte(CP_UTF8,0,args[++i],-1,selected_disc,sizeof(selected_disc),NULL,NULL);
+        LocalFree(args);
+        char base[LAUNCHER_PATH_MAX];wchar_t root[LAUNCHER_PATH_MAX];
+        if(!portable_executable_root(base,sizeof(base))||!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,base,-1,root,LAUNCHER_PATH_MAX)||!SetCurrentDirectoryW(root))return 1;
+    }
+#endif
+    LauncherConfig launch_config;char config_error[256];
+    if(!launcher_config_load("config/launcher_config.json",&launch_config,config_error,sizeof(config_error))){
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Launcher configuration",config_error,NULL);return 1;
+    }
+    input_configure(&launch_config);
+    card_store_init("saves");card_hle_reset();
+    const char* tuning_path=portable_mode?"config/runtime_tuning.cfg":"build_test/runtime_tuning.cfg";
+    const char* chain_path=portable_mode?"config/dispatch_chain.cfg":"build_test/dispatch_chain.cfg";
+    if(portable_mode){
+        char error[256];DiscImage* disc=disc_image_open(selected_disc,error,sizeof(error));
+        bool valid=disc&&disc_image_validate_game(disc,error,sizeof(error));disc_image_close(disc);
+        if(!valid){SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Game image",error,NULL);return 1;}
+    }
     static char stdout_buffer[65536];
     setvbuf(stdout,stdout_buffer,_IOFBF,sizeof(stdout_buffer));
     printf("[Frame timing] QPC exclusive wall ms; game includes dispatcher/HLE outside GX; EFB includes XFB. 60-frame windows. Release PGO USE is not collection.\n");
@@ -1087,40 +1154,26 @@ int main(int argc, char** argv) {
     cpu.external_write = handle_external_write;
     cpu.external_pointer = handle_external_pointer;
 
-    // Resolve Disc Path & Init DVD VFS
-    char ciso_path[512];
-    if (argc > 2) snprintf(ciso_path, sizeof(ciso_path), "%s", argv[2]);
-    if (argc > 2 || find_existing_file("Digimon Rumble Arena 2 (USA).ciso", ciso_path, sizeof(ciso_path))) {
-        if (dvd_vfs_init(ciso_path, &cpu)) {
-            dvd_vfs_read_bytes(0, cpu.ram, 0x440);
-        }
+    // Developer DOL+disc arguments remain supported; portable builds boot from the user's disc.
+    char ciso_path[LAUNCHER_PATH_MAX]={0};
+    if(portable_mode)snprintf(ciso_path,sizeof(ciso_path),"%s",selected_disc);
+    else if(argc>2)snprintf(ciso_path,sizeof(ciso_path),"%s",argv[2]);
+    bool disc_ready=false;
+    if(portable_mode||argc>2||find_existing_file("Digimon Rumble Arena 2 (USA).ciso",ciso_path,sizeof(ciso_path)))
+        disc_ready=dvd_vfs_init(ciso_path,&cpu)&&dvd_vfs_read_bytes(0,cpu.ram,0x440);
+    char dol_path[LAUNCHER_PATH_MAX]={0};DolMetadata meta;bool loaded=false;
+    if(portable_mode&&disc_ready){
+        char error[256];DiscImage* disc=disc_image_open(ciso_path,error,sizeof(error));void* data=NULL;size_t size=0;
+        if(disc&&disc_image_dol(disc,&data,&size))loaded=dol_load_memory(data,size,&cpu,&meta);
+        free(data);disc_image_close(disc);
+    }else if(!portable_mode){
+        if(argc>1)snprintf(dol_path,sizeof(dol_path),"%s",argv[1]);
+        if(argc>1||find_existing_file("extracted/sys/main.dol",dol_path,sizeof(dol_path)))loaded=dol_load(dol_path,&cpu,&meta);
     }
-
-    // Resolve DOL Path
-    char dol_path[512];
-    if (argc > 1) snprintf(dol_path, sizeof(dol_path), "%s", argv[1]);
-    if (argc <= 1 && !find_existing_file("extracted/sys/main.dol", dol_path, sizeof(dol_path))) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Digimon Recomp",
-            "Nao foi possivel encontrar o arquivo 'extracted/sys/main.dol'!\nCertifique-se de executar o jogo na pasta do projeto.", window);
-        gx_pipe_shutdown();
-        video_audio_shutdown();
-        cpu_free(&cpu);
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-
-    DolMetadata meta;
-    if (!dol_load(dol_path, &cpu, &meta)) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Digimon Recomp", "Falha ao ler o executavel main.dol!", window);
-        gx_pipe_shutdown();
-        video_audio_shutdown();
-        cpu_free(&cpu);
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
+    if(!loaded||(portable_mode&&!disc_ready)){
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Digimon Recomp","Falha ao carregar DOL/disco. Verifique o dump original no Launcher.",window);
+        gx_pipe_shutdown();video_audio_shutdown();cpu_free(&cpu);dvd_vfs_shutdown();card_store_shutdown();
+        SDL_DestroyRenderer(renderer);SDL_DestroyWindow(window);SDL_Quit();return 1;
     }
 
     // Load FST into RAM at 0x80400000 (safely above CRT0 boot stack at 0x803D54E0)
@@ -1356,13 +1409,13 @@ int main(int argc, char** argv) {
         // Update window title with FPS and executed blocks every second
         Uint32 current_time = SDL_GetTicks();
         if (current_time - start_time >= 1000) {
-            FILE* chain_config=fopen("build_test/dispatch_chain.cfg","r");
+            FILE* chain_config=fopen(chain_path,"r");
             if(chain_config){int enabled;if(fscanf(chain_config,"%d",&enabled)==1 && (enabled==0 || enabled==1))s_chain_requested=enabled!=0;fclose(chain_config);}
             // Host-only live diagnostics: change scheduling/worker cost while
             // the user's actual four-player selection stays intact. No PAD or
             // guest-state writes. All GX workers have completed at this point.
             int completion=0,pump=0,domain=1,m44=1,attrs=1,fbits=0,gpu_xf=1,vram_only=1,geometry_cache=1,xfb_vram=1,decode_cache=1,fast_float=1,dirty_tracking=0,async_decode=0,image_versions=0,frame_pipeline=1;
-            FILE* tuning=fopen("build_test/runtime_tuning.cfg","r");
+            FILE* tuning=fopen(tuning_path,"r");
             if(tuning) {
                 u32 quantum;int parallel,packed=1,skinning=1,ram_inline=0,blocks_enabled=1;
                 if(fscanf(tuning,"%u %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",&quantum,&parallel,&packed,&skinning,&ram_inline,&blocks_enabled,&completion,&pump,&domain,&m44,&attrs,&fbits,&gpu_xf,&vram_only,&geometry_cache,&xfb_vram,&decode_cache,&fast_float,&dirty_tracking,&async_decode,&image_versions,&frame_pipeline)>=2 && quantum>=64 && quantum<=4096 &&
@@ -1567,6 +1620,7 @@ int main(int argc, char** argv) {
     input_shutdown();
     video_audio_shutdown();
     dvd_vfs_shutdown();
+    card_store_shutdown();
     cpu_free(&cpu);
 #ifdef _WIN32
     s_crash_cpu = NULL;
