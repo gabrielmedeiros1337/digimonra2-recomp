@@ -218,3 +218,12 @@ Não foram alterados chunks, GX, orçamento, pacer ou filas de renderização.
 Validação: 23/23 CTest, incluindo transições SDL janela/sem bordas/exclusiva,
 restauração de dimensões, repetição do atalho e configurações legadas sem
 `window_mode`. O monitor/driver continua responsável pelo suporte a FreeSync.
+
+## Publicação reproduzível
+
+As referências históricas a `ModernGekko-Template/` acima descrevem o checkout
+local original. O build atual usa o snapshot idêntico em
+`third_party/recomp-deps/`, sem submódulos. O SDL2 x64 necessário também é
+versionado. Consulte o README e `PUBLISH_VALIDATION.md`: o clone independente
+compilou, passou no inventário/pilha e nos 24 testes, incluindo integridade
+do snapshot. A build congelada original não foi substituída.

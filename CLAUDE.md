@@ -1,5 +1,11 @@
 # CLAUDE.md — Digimon Rumble Arena 2 Recomp
 
+## Build reproduzível atual
+
+- Use `build_test/usability/` ou uma pasta nova. **Não recompile a build congelada em `build_test/Release/`.**
+- Dependências de produção em `third_party/recomp-deps/`; confira com `python tools/verify_dependencies.py`.
+- Não é necessário inicializar submódulos. A antiga árvore local ModernGekko foi preservada, mas não entra no build atual.
+
 ## Regras para edição
 
 - **NÃO edite** `recompiled_code/generated/` (código gerado pelo recompiler)
@@ -12,16 +18,16 @@
 
 ```powershell
 # Build incremental:
-& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build ".\build_test" --config Release
+& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build ".\build_test\usability" --config Release
 
 # Build limpo:
-& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build ".\build_test" --config Release --clean-first
+& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build ".\build_test\usability" --config Release --clean-first
 
 # Inventário de símbolos:
-python tools/symbol_inventory.py
+python tools/symbol_inventory.py --build-dir build_test/usability --report build_test/usability/symbol_inventory_report.txt
 
 # Executar (input físico; confirmar os prompts na janela):
-.\build_test\Release\digimon_test.exe
+.\DigimonRA2_PC\DigimonRA2.exe
 ```
 
 ## Convenções do projeto
