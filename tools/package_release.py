@@ -65,7 +65,8 @@ DolRecomp and Dolphin-derived code/docs retain their upstream licenses.
 Freely generated DSP coefficients: pinned Dolphin Data/Sys/GC/dsp_coef.bin.
 See LICENSES/ for the complete bundled license texts.
 Project source: https://github.com/gabrielmedeiros1337/digimonra2-recomp
-No Nintendo/Bandai disc, DOL, textures, music or game save is included.
+No disc dump, DOL, extracted game assets, music or user save is included.
+Launcher credit illustration: Agumon image supplied by the user, embedded in the launcher.
 Microsoft Visual C++ x64 Redistributable is a prerequisite, not bundled.
 """
     (output / "THIRD_PARTY_NOTICES.txt").write_text(notices, encoding="utf-8")

@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <objidl.h>
+#include <gdiplus.h>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -15,7 +17,15 @@ extern "C" {
 namespace fs=std::filesystem;
 static LauncherConfig config;
 static HWND main_window,image_edit,ports[4],keyboard_check,keyboard_port,key_buttons[KEY_BIND_COUNT],status_label,play_button;
-static HFONT font,heading,small;static HBRUSH background,panel;static int scale=96,capture=-1;
+static HWND vsync_check;
+static std::vector<HWND> page_controls[4];
+static int building_page=-1,active_page=0;
+static HWND tab_buttons[4];
+static ULONG_PTR gdiplus_token;
+static IStream* agumon_stream;
+static Gdiplus::Image* agumon;
+static void update_keys();
+static HFONT font,heading,small_font;static HBRUSH background,panel;static int scale=96,capture=-1;
 static InputDevice devices[INPUT_DEVICE_MAX];static int device_count;static std::vector<std::string> choices;
 static fs::path root;static HANDLE game=nullptr;
 static constexpr COLORREF bg=RGB(12,19,32),surface=RGB(24,37,56),blue=RGB(34,126,231),text=RGB(230,240,254),muted=RGB(153,179,210);
@@ -24,12 +34,27 @@ static std::wstring wide(const char* p){int n=MultiByteToWideChar(CP_UTF8,MB_ERR
 static std::string utf8(const std::wstring& s){int n=WideCharToMultiByte(CP_UTF8,0,s.c_str(),int(s.size()),nullptr,0,nullptr,nullptr);std::string p(n,0);WideCharToMultiByte(CP_UTF8,0,s.c_str(),int(s.size()),p.data(),n,nullptr,nullptr);return p;}
 static std::string path8(const fs::path& p){auto u=p.u8string();return std::string(reinterpret_cast<const char*>(u.data()),u.size());}
 static void message(const std::wstring& s){MessageBoxW(main_window,s.c_str(),L"Digimon Rumble Arena 2",MB_OK|MB_ICONINFORMATION);}
-static HWND control(const wchar_t* cls,const wchar_t* label,int style,int id,int x,int y,int w,int h){HWND c=CreateWindowExW(0,cls,label,WS_CHILD|WS_VISIBLE|style,px(x),px(y),px(w),px(h),main_window,(HMENU)(INT_PTR)id,GetModuleHandleW(nullptr),nullptr);SendMessageW(c,WM_SETFONT,(WPARAM)font,TRUE);return c;}
+static HWND control(const wchar_t* cls,const wchar_t* label,int style,int id,int x,int y,int w,int h){HWND c=CreateWindowExW(0,cls,label,WS_CHILD|WS_VISIBLE|style,px(x),px(y),px(w),px(h),main_window,(HMENU)(INT_PTR)id,GetModuleHandleW(nullptr),nullptr);SendMessageW(c,WM_SETFONT,(WPARAM)font,TRUE);if(building_page>=0)page_controls[building_page].push_back(c);return c;}
 static HWND button(const wchar_t* label,int id,int x,int y,int w,int h){return control(L"BUTTON",label,BS_OWNERDRAW|WS_TABSTOP,id,x,y,w,h);}
 static void label(const wchar_t* value,int x,int y,int w,int h){control(L"STATIC",value,0,0,x,y,w,h);}
 static void update_keys(){for(int i=0;i<KEY_BIND_COUNT;i++){std::wstring s=wide(launcher_key_names[i])+L"   ·   "+wide(SDL_GetScancodeName((SDL_Scancode)config.keys[i]));if(!config.keys[i])s=wide(launcher_key_names[i])+L"   ·   —";if(capture==i)s=L"Pressione uma tecla...";SetWindowTextW(key_buttons[i],s.c_str());}}
+static void show_page(int page){
+ if(page<0||page>3)return;capture=-1;update_keys();active_page=page;
+ for(int i=0;i<4;i++){for(HWND child:page_controls[i])ShowWindow(child,i==page?SW_SHOW:SW_HIDE);InvalidateRect(tab_buttons[i],nullptr,TRUE);}
+ InvalidateRect(main_window,nullptr,TRUE);SetFocus(tab_buttons[page]);
+}
+static void load_agumon(HINSTANCE instance){
+ Gdiplus::GdiplusStartupInput startup;if(Gdiplus::GdiplusStartup(&gdiplus_token,&startup,nullptr)!=Gdiplus::Ok)return;
+ HRSRC resource=FindResourceW(instance,MAKEINTRESOURCEW(101),RT_RCDATA);if(!resource)return;
+ DWORD bytes=SizeofResource(instance,resource);void* data=LockResource(LoadResource(instance,resource));if(!data||!bytes)return;
+ HGLOBAL copy=GlobalAlloc(GMEM_MOVEABLE,bytes);if(!copy)return;void* target=GlobalLock(copy);if(!target){GlobalFree(copy);return;}memcpy(target,data,bytes);GlobalUnlock(copy);
+ if(CreateStreamOnHGlobal(copy,TRUE,&agumon_stream)!=S_OK){GlobalFree(copy);return;}
+ agumon=Gdiplus::Image::FromStream(agumon_stream);
+ if(agumon->GetLastStatus()!=Gdiplus::Ok){delete agumon;agumon=nullptr;}
+}
 static void read_controls(){
  wchar_t path[LAUNCHER_PATH_MAX];GetWindowTextW(image_edit,path,LAUNCHER_PATH_MAX);auto p=utf8(path);strncpy_s(config.image_path,p.c_str(),_TRUNCATE);
+ config.vsync=SendMessageW(vsync_check,BM_GETCHECK,0,0)==BST_CHECKED;
  config.keyboard_enabled=SendMessageW(keyboard_check,BM_GETCHECK,0,0)==BST_CHECKED;config.keyboard_port=int(SendMessageW(keyboard_port,CB_GETCURSEL,0,0));
  for(int i=0;i<4;i++){int selected=int(SendMessageW(ports[i],CB_GETCURSEL,0,0));if(selected>=0&&selected<int(choices.size()))strcpy_s(config.ports[i],choices[selected].c_str());}
 }
@@ -87,10 +112,11 @@ static SDL_Scancode scancode(WPARAM vk,LPARAM flags){
 static LRESULT CALLBACK procedure(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
  switch(msg){
  case WM_CTLCOLORSTATIC:case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:SetTextColor((HDC)w,text);SetBkColor((HDC)w,msg==WM_CTLCOLORSTATIC?bg:surface);return (LRESULT)(msg==WM_CTLCOLORSTATIC?background:panel);
+ case WM_PAINT:{PAINTSTRUCT paint;HDC dc=BeginPaint(hwnd,&paint);if(active_page==3){Gdiplus::Graphics graphics(dc);Gdiplus::SolidBrush white(Gdiplus::Color(255,255,255));graphics.FillRectangle(&white,px(638),px(218),px(324),px(350));if(agumon){graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);graphics.DrawImage(agumon,px(644),px(247),px(312),px(270));}}EndPaint(hwnd,&paint);return 0;}
  case WM_ERASEBKGND:{RECT r;GetClientRect(hwnd,&r);FillRect((HDC)w,&r,background);return 1;}
- case WM_DRAWITEM:{auto* d=(DRAWITEMSTRUCT*)l;FillRect(d->hDC,&d->rcItem,background);COLORREF color=d->CtlID==100?blue:surface;HBRUSH b=CreateSolidBrush(color);HPEN pen=CreatePen(PS_SOLID,1,(d->itemState&ODS_FOCUS)?text:RGB(45,76,111));SelectObject(d->hDC,b);SelectObject(d->hDC,pen);RoundRect(d->hDC,d->rcItem.left,d->rcItem.top,d->rcItem.right,d->rcItem.bottom,px(8),px(8));wchar_t value[256];GetWindowTextW(d->hwndItem,value,256);SetBkMode(d->hDC,TRANSPARENT);SetTextColor(d->hDC,(d->itemState&ODS_DISABLED)?muted:text);SelectObject(d->hDC,font);RECT r=d->rcItem;DrawTextW(d->hDC,value,-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);SelectObject(d->hDC,GetStockObject(NULL_BRUSH));SelectObject(d->hDC,GetStockObject(NULL_PEN));DeleteObject(b);DeleteObject(pen);return TRUE;}
+ case WM_DRAWITEM:{auto* d=(DRAWITEMSTRUCT*)l;FillRect(d->hDC,&d->rcItem,background);COLORREF color=(d->CtlID==100||(d->CtlID>=500&&d->CtlID<504&&int(d->CtlID)-500==active_page))?blue:surface;HBRUSH b=CreateSolidBrush(color);HPEN pen=CreatePen(PS_SOLID,1,(d->itemState&ODS_FOCUS)?text:RGB(45,76,111));SelectObject(d->hDC,b);SelectObject(d->hDC,pen);RoundRect(d->hDC,d->rcItem.left,d->rcItem.top,d->rcItem.right,d->rcItem.bottom,px(8),px(8));wchar_t value[256];GetWindowTextW(d->hwndItem,value,256);SetBkMode(d->hDC,TRANSPARENT);SetTextColor(d->hDC,(d->itemState&ODS_DISABLED)?muted:text);SelectObject(d->hDC,font);RECT r=d->rcItem;DrawTextW(d->hDC,value,-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);SelectObject(d->hDC,GetStockObject(NULL_BRUSH));SelectObject(d->hDC,GetStockObject(NULL_PEN));DeleteObject(b);DeleteObject(pen);return TRUE;}
  case WM_COMMAND:{int id=LOWORD(w),notification=HIWORD(w);
-  if(id==100)play();else if(id==101)browse();else if(id==102)save();else if(id==103){auto p=path8(root/L"saves");portable_mkdirs(p.c_str());ShellExecuteW(hwnd,L"open",(root/L"saves").c_str(),nullptr,nullptr,SW_SHOWNORMAL);}else if(id==104){SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER|SDL_INIT_JOYSTICK);SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER|SDL_INIT_JOYSTICK);refresh_devices();}
+  if(id>=500&&id<504)show_page(id-500);else if(id==400)ShellExecuteW(hwnd,L"open",L"https://github.com/gabrielmedeiros1337/digimonra2-recomp",nullptr,nullptr,SW_SHOWNORMAL);else if(id==100)play();else if(id==101)browse();else if(id==102)save();else if(id==103){auto p=path8(root/L"saves");portable_mkdirs(p.c_str());ShellExecuteW(hwnd,L"open",(root/L"saves").c_str(),nullptr,nullptr,SW_SHOWNORMAL);}else if(id==104){SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER|SDL_INIT_JOYSTICK);SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER|SDL_INIT_JOYSTICK);refresh_devices();}
   else if(id>=200&&id<204&&notification==CBN_SELCHANGE)normalize_assignment(id-200);
   else if(id==211&&notification==CBN_SELCHANGE){read_controls();for(int i=0;i<4;i++)if(!strcmp(config.ports[i],"keyboard"))SendMessageW(ports[i],CB_SETCURSEL,0,0);SendMessageW(ports[config.keyboard_port],CB_SETCURSEL,1,0);}
   else if(id>=300&&id<300+KEY_BIND_COUNT){capture=id-300;update_keys();SetFocus(hwnd);}
@@ -106,21 +132,54 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){
  SetProcessDPIAware();SDL_SetMainReady();if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMECONTROLLER|SDL_INIT_EVENTS)!=0){MessageBoxA(nullptr,SDL_GetError(),"SDL",MB_ICONERROR);return 1;}
  char base[LAUNCHER_PATH_MAX];if(!portable_executable_root(base,sizeof(base)))return 1;root=fs::path(std::u8string(reinterpret_cast<const char8_t*>(base)));char error[256];auto cfg=path8(root/L"config/launcher_config.json");bool loaded=launcher_config_load(cfg.c_str(),&config,error,sizeof(error));
  background=CreateSolidBrush(bg);panel=CreateSolidBrush(surface);HDC screen=GetDC(nullptr);scale=GetDeviceCaps(screen,LOGPIXELSX);ReleaseDC(nullptr,screen);
- font=CreateFontW(-px(15),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");heading=CreateFontW(-px(30),0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");small=CreateFontW(-px(13),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+ font=CreateFontW(-px(15),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");heading=CreateFontW(-px(30),0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");small_font=CreateFontW(-px(13),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
  WNDCLASSW wc{};wc.lpfnWndProc=procedure;wc.hInstance=instance;wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);wc.lpszClassName=L"DigimonRA2Launcher";wc.hbrBackground=background;RegisterClassW(&wc);
  RECT r={0,0,px(1020),px(710)};DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;AdjustWindowRect(&r,style,FALSE);main_window=CreateWindowW(wc.lpszClassName,L"Digimon Rumble Arena 2 • PC Launcher",style,CW_USEDEFAULT,CW_USEDEFAULT,r.right-r.left,r.bottom-r.top,nullptr,nullptr,instance,nullptr);
  HWND title=control(L"STATIC",L"DIGIMON RUMBLE ARENA 2",0,0,32,24,950,45);SendMessageW(title,WM_SETFONT,(WPARAM)heading,TRUE);label(L"PC NATIVE  /  Seus controles. Seu cartão. Sua arena.",34,74,900,24);
- label(L"JOGO BASE  ·  Seu dump original (USA)",34,120,900,24);image_edit=control(L"EDIT",wide(config.image_path).c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,110,34,153,630,36);button(L"Procurar...",101,676,153,130,36);play_button=button(L"JOGAR",100,822,144,162,54);
- label(L"ISO / CISO / NKit ISO / RVZ  ·  Nenhum jogo ou asset é incluído neste pacote.",34,200,950,22);
- label(L"CONTROLES  ·  Uma porta por dispositivo",34,241,700,24);button(L"Atualizar",104,858,235,126,32);
- for(int i=0;i<4;i++){std::wstring name=L"JOGADOR "+std::to_wstring(i+1);label(name.c_str(),34+i*240,281,220,24);ports[i]=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,200+i,34+i*240,310,228,230);}
- keyboard_check=control(L"BUTTON",L"Habilitar controle por Teclado",BS_AUTOCHECKBOX|WS_TABSTOP,210,34,361,320,28);SendMessageW(keyboard_check,BM_SETCHECK,config.keyboard_enabled?BST_CHECKED:BST_UNCHECKED,0);
- label(L"Porta do teclado:",372,365,140,24);keyboard_port=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,211,510,359,140,150);for(int i=1;i<=4;i++){std::wstring s=L"Jogador "+std::to_wstring(i);SendMessageW(keyboard_port,CB_ADDSTRING,0,(LPARAM)s.c_str());}SendMessageW(keyboard_port,CB_SETCURSEL,config.keyboard_port,0);
- label(L"TECLAS  ·  Clique e pressione uma tecla. Esc cancela; Delete limpa.",34,410,950,24);
- for(int i=0;i<KEY_BIND_COUNT;i++)key_buttons[i]=button(L"",300+i,34+(i/5)*240,445+(i%5)*33,228,28);
- status_label=control(L"STATIC",L"",0,0,34,625,660,24);button(L"Abrir Saves",103,710,620,130,34);button(L"Salvar ajustes",102,852,620,132,34);
- label(L"Teclado desabilitado = nenhum botão de teclado chega ao PAD.  ·  Esc fecha o jogo.",34,672,950,22);
+ const wchar_t* tabs[]={L"Jogar",L"Controles",L"Opções",L"Créditos"};
+ for(int i=0;i<4;i++)tab_buttons[i]=button(tabs[i],500+i,34+i*240,116,228,42);
+ building_page=0;
+ label(L"SUA PRÓXIMA BATALHA COMEÇA AQUI",34,200,920,30);
+ label(L"Selecione seu dump original de Digimon Rumble Arena 2 (USA).",34,247,920,24);
+ image_edit=control(L"EDIT",wide(config.image_path).c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,110,34,288,746,38);
+ button(L"Procurar...",101,794,288,190,38);
+ label(L"ISO / CISO / NKit ISO / RVZ",34,345,920,24);
+ label(L"Seu jogo original é necessário. O pacote não inclui dump nem assets do jogo.",34,380,920,24);
+ play_button=button(L"JOGAR",100,34,448,300,64);
+ status_label=control(L"STATIC",L"",0,0,34,555,920,24);
+ button(L"Abrir pasta de saves",103,34,598,240,36);
+ building_page=1;
+ label(L"CONTROLES  ·  Uma porta por dispositivo",34,198,700,24);button(L"Atualizar",104,858,193,126,32);
+ for(int i=0;i<4;i++){std::wstring name=L"JOGADOR "+std::to_wstring(i+1);label(name.c_str(),34+i*240,247,220,24);ports[i]=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,200+i,34+i*240,276,228,230);}
+ keyboard_check=control(L"BUTTON",L"Habilitar controle por Teclado",BS_AUTOCHECKBOX|WS_TABSTOP,210,34,329,320,28);SendMessageW(keyboard_check,BM_SETCHECK,config.keyboard_enabled?BST_CHECKED:BST_UNCHECKED,0);
+ label(L"Porta do teclado:",372,333,140,24);keyboard_port=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,211,510,327,140,150);for(int i=1;i<=4;i++){std::wstring name=L"Jogador "+std::to_wstring(i);SendMessageW(keyboard_port,CB_ADDSTRING,0,(LPARAM)name.c_str());}SendMessageW(keyboard_port,CB_SETCURSEL,config.keyboard_port,0);
+ label(L"TECLAS  ·  Clique e pressione uma tecla. Esc cancela; Delete limpa.",34,383,950,24);
+ for(int i=0;i<KEY_BIND_COUNT;i++)key_buttons[i]=button(L"",300+i,34+(i/5)*240,421+(i%5)*33,228,28);
+ label(L"Teclado desabilitado = nenhum botão de teclado chega ao PAD. Esc fecha o jogo.",34,607,950,24);
+ building_page=2;
+ label(L"OPÇÕES DE APRESENTAÇÃO",34,200,920,30);
+ vsync_check=control(L"BUTTON",L"Ativar VSync",BS_AUTOCHECKBOX|WS_TABSTOP,410,34,260,500,32);SendMessageW(vsync_check,BM_SETCHECK,config.vsync?BST_CHECKED:BST_UNCHECKED,0);
+ label(L"Desligado por padrão, preservando a configuração estável de performance.",34,308,920,24);
+ label(L"Ligado: solicita sincronização com o monitor ao iniciar o jogo.",34,344,920,24);
+ label(L"FreeSync / VRR é configurado no monitor e no driver da sua placa de vídeo.",34,380,920,24);
+ label(L"O limite do jogo continua em 60 FPS. Alterações valem na próxima abertura.",34,416,920,24);
+ label(L"ESCALA DE IMAGEM",34,482,920,24);
+ HWND fsr=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST,420,34,522,450,100);SendMessageW(fsr,CB_ADDSTRING,0,(LPARAM)L"Nativa · FSR indisponível nesta versão");SendMessageW(fsr,CB_SETCURSEL,0,0);EnableWindow(fsr,FALSE);
+ label(L"FSR ainda não faz parte do renderizador. Nenhum filtro é ativado silenciosamente.",34,575,950,24);
+ building_page=3;
+ label(L"OBRIGADO POR BAIXAR!",34,212,570,36);
+ label(L"Que bom ter você de volta à arena.",34,264,570,28);
+ label(L"Este port é construído com dedicação pela comunidade.",34,309,570,26);
+ label(L"Código, novidades e contribuições no GitHub:",34,363,570,26);
+ button(L"github.com/gabrielmedeiros1337/digimonra2-recomp",400,34,410,568,48);
+ label(L"Criado por Gabriel Medeiros e colaboradores do projeto.",34,489,570,26);
+ label(L"Um Agumon para acompanhar suas próximas batalhas!",34,534,570,26);
+ label(L"Digimon pertence aos seus respectivos detentores.",34,588,920,24);
+ building_page=-1;
+ button(L"Salvar ajustes",102,794,661,190,34);
+ label(L"DIGIMON RA2  /  PC NATIVO",34,666,650,24);
+ load_agumon(instance);show_page(0);
  refresh_devices(true);update_keys();refresh_save();ShowWindow(main_window,SW_SHOW);SetTimer(main_window,1,400,nullptr);if(!loaded)message(wide(error));
  MSG m;while(GetMessageW(&m,nullptr,0,0)>0){if(capture>=0&&(m.message==WM_KEYDOWN||m.message==WM_SYSKEYDOWN)){procedure(main_window,m.message,m.wParam,m.lParam);continue;}if(!IsDialogMessageW(main_window,&m)){TranslateMessage(&m);DispatchMessageW(&m);}}
- if(game)CloseHandle(game);DeleteObject(font);DeleteObject(heading);DeleteObject(small);DeleteObject(background);DeleteObject(panel);SDL_Quit();return 0;
+ if(game)CloseHandle(game);delete agumon;if(agumon_stream)agumon_stream->Release();if(gdiplus_token)Gdiplus::GdiplusShutdown(gdiplus_token);DeleteObject(font);DeleteObject(heading);DeleteObject(small_font);DeleteObject(background);DeleteObject(panel);SDL_Quit();return 0;
 }

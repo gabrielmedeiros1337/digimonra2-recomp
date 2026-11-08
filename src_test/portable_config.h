@@ -15,6 +15,7 @@ typedef struct {
     /* "none", "keyboard", "auto", or SDL GUID + ':' + ordinal of identical GUIDs. */
     char ports[4][80];
     int keys[KEY_BIND_COUNT];
+    bool vsync; /* Opt-in presentation setting; default OFF keeps the stable baseline. */
 } LauncherConfig;
 extern const char* const launcher_key_names[KEY_BIND_COUNT];
 void launcher_config_defaults(LauncherConfig* config);

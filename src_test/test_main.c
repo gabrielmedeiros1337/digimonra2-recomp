@@ -1114,10 +1114,11 @@ int main(int argc, char** argv) {
 
     SDL_RendererInfo renderer_info;
     if (SDL_GetRendererInfo(renderer, &renderer_info) == 0) printf("[Renderer] %s\n", renderer_info.name);
-    int vsync_result=SDL_RenderSetVSync(renderer,0);
-    int swap_result=SDL_GL_SetSwapInterval(0);
-    printf("[Pacer] renderer_vsync_off=%d gl_swap_off=%d swap_interval=%d (single host limiter)\n",
-           vsync_result,swap_result,SDL_GL_GetSwapInterval());
+    int requested_vsync=launch_config.vsync ? 1 : 0;
+    int vsync_result=SDL_RenderSetVSync(renderer,requested_vsync);
+    int swap_result=SDL_GL_SetSwapInterval(requested_vsync);
+    printf("[Pacer] requested_vsync=%d renderer_result=%d gl_swap_result=%d swap_interval=%d (guest cadence unchanged)\n",
+           requested_vsync,vsync_result,swap_result,SDL_GL_GetSwapInterval());
     s_main_window = window;
     s_main_renderer = renderer;
 

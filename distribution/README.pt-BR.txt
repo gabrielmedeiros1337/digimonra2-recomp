@@ -58,3 +58,11 @@ são criados ao rodar, não distribuídos no pacote. Em caso de falha, envie o l
 DEPENDÊNCIAS
 Consulte LICENSES/ e THIRD_PARTY_NOTICES.txt. Este projeto não é afiliado
 aos detentores da marca Digimon. Use seu próprio dump do jogo.
+
+ABAS DO LAUNCHER
+Jogar: dump original, botão JOGAR e acesso aos saves.
+Controles: portas 1–4, dispositivos e mapeamento de teclado.
+Opções: VSync opcional (OFF por padrão, aplicado na próxima abertura).
+FreeSync/VRR permanece sob controle do monitor/driver; o jogo continua a 60 FPS.
+FSR não está implementado e aparece explicitamente como indisponível.
+Créditos: agradecimento, Agumon e link clicável para o repositório.

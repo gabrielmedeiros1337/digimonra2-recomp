@@ -41,6 +41,7 @@ bool launcher_config_load(const char* p,LauncherConfig* c,char* error,size_t cap
     picojson::value root;std::string err=picojson::parse(root,text);if(!err.empty()||!root.is<picojson::object>())return fail(error,cap,"Invalid launcher JSON.");
     LauncherConfig v=*c;
     auto& o=root.get<picojson::object>();
+    if(o.count("vsync")){if(!o["vsync"].is<bool>())return fail(error,cap,"Invalid VSync setting.");v.vsync=o["vsync"].get<bool>();}
     auto get=[&](const char* key)->const picojson::value&{static picojson::value nil;auto it=o.find(key);return it==o.end()?nil:it->second;};
     if(!get("image_path").is<std::string>()||get("image_path").get<std::string>().size()>=sizeof(v.image_path))return fail(error,cap,"Invalid image_path.");
     strcpy_s(v.image_path,get("image_path").get<std::string>().c_str());
@@ -54,6 +55,7 @@ bool launcher_config_load(const char* p,LauncherConfig* c,char* error,size_t cap
 }
 bool launcher_config_save(const char* p,const LauncherConfig* c,char* e,size_t cap){
     picojson::object o;o["version"]=picojson::value(1.0);o["image_path"]=picojson::value(std::string(c->image_path));o["keyboard_enabled"]=picojson::value(c->keyboard_enabled);o["keyboard_port"]=picojson::value(double(c->keyboard_port));
+    o["vsync"]=picojson::value(c->vsync);
     picojson::array ports,keys;for(auto& s:c->ports)ports.emplace_back(std::string(s));for(int k:c->keys)keys.emplace_back(double(k));o["ports"]=picojson::value(ports);o["keys"]=picojson::value(keys);
     std::string text=picojson::value(o).serialize(true);if(!portable_write_atomic(p,text.data(),text.size()))return fail(e,cap,"Cannot save configuration (check folder permissions).");return true;
 }

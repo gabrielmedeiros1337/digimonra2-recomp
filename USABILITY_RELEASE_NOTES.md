@@ -184,3 +184,16 @@ No teste manual em portable_smoke, o usuario atribuiu o Ultimate C Wired
 Controller ao P1 e desabilitou o teclado. O jogo criou uma entrada CARD de
 8192 bytes; payload nao-zero e CRC do container foram conferidos no disco.
 A confirmacao de carregar progresso apos reiniciar ainda depende do usuario.
+
+## Launcher em abas
+
+Jogar, Controles, Opções e Créditos usam grupos de controles Win32 separados,
+sem recriar a configuração ou perder vínculos ao mudar de aba. A imagem
+`distribution/assets/agumon.jpg`, fornecida pelo usuário, fica embutida no
+recurso RCDATA do executável e é desenhada por GDI+ somente no launcher.
+O link dos créditos abre o repositório no navegador padrão.
+
+A opção JSON `vsync` é um booleano opcional: configurações anteriores continuam
+válidas e usam OFF. Ao iniciar o core, apenas a solicitação inicial de VSync
+SDL/OpenGL recebe esse valor. O orçamento, pacer e limite guest de 60 FPS não
+são alterados. FSR aparece como indisponível: não há shader FSR no backend.
