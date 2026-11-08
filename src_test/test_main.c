@@ -86,6 +86,7 @@ static bool (*s_dispatch_continue)(CPUState*,void*);
 static void* s_dispatch_context;
 static struct {u64 hosts,calls,links,budget_stops,fence_stops;} s_dispatch_stats;
 static bool s_paced_event_pump=false;
+static int s_aspect_ratio=0;
 void platform_set_cpu_quantum(u32 quantum){if(quantum>=64 && quantum<=4096)s_cpu_quantum=quantum;}
 void* handle_external_pointer(CPUState* cpu,u32 address,u32 size){(void)cpu;return locked_cache_pointer(address,size);}
 
@@ -414,6 +415,17 @@ static int platform_dispatch_replacement(CPUState* ctx, u32 address) {
     case 0x802AD51Cu:
         return card_hle_dispatch(ctx,address);
 
+    case 0x80249858u: {
+        if (s_aspect_ratio == 1) {
+            // Expand horizontal camera frustum bounds (f1 = left, f2 = right) by 4/3
+            // so CPU Frustum Culling planes match the 16:9 widescreen Hor+ field of view:
+            ctx->fpr[1] *= (4.0f / 3.0f);
+            ctx->fpr[2] *= (4.0f / 3.0f);
+            ctx->ps1[1] = ctx->fpr[1];
+            ctx->ps1[2] = ctx->fpr[2];
+        }
+        return 0; // Fall through to execute guest 0x80249858 with expanded frustum
+    }
     case 0x8028BEDCu:
     case 0x8028BF58u:
         if(sdk_vec_transform(ctx,false)){platform_continue_cpu_slice();return 1;}return 0;
@@ -1099,6 +1111,10 @@ int main(int argc, char** argv) {
     if(launch_config.internal_resolution >= 0 && launch_config.internal_resolution < (int)(sizeof(s_internal_res_table)/sizeof(s_internal_res_table[0]))){
         efb_scale = s_internal_res_table[launch_config.internal_resolution];
     }
+    int aspect_ratio = 0;
+    if(launch_config.aspect_ratio >= 0 && launch_config.aspect_ratio <= 1){
+        aspect_ratio = launch_config.aspect_ratio;
+    }
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--window-res") && i+1<argc){
             int idx = atoi(argv[++i]);
@@ -1107,10 +1123,17 @@ int main(int argc, char** argv) {
         if(!strcmp(argv[i],"--internal-scale") && i+1<argc){
             efb_scale = (float)atof(argv[++i]);
         }
+        if(!strcmp(argv[i],"--aspect-ratio") && i+1<argc){
+            aspect_ratio = atoi(argv[++i]);
+            if(aspect_ratio < 0 || aspect_ratio > 1) aspect_ratio = 0;
+        }
     }
     gx_pipe_set_internal_scale(efb_scale);
-    printf("[Video Configuration] Window: %dx%d, Internal EFB scale: %.2fx (%dx%d)\n",
-           win_w, win_h, efb_scale, (int)(640.0f * efb_scale + 0.5f), (int)(528.0f * efb_scale + 0.5f));
+    gx_pipe_set_aspect_ratio(aspect_ratio);
+    s_aspect_ratio = aspect_ratio;
+    printf("[Video Configuration] Window: %dx%d, Internal EFB scale: %.2fx (%dx%d), Aspect Ratio: %s\n",
+           win_w, win_h, efb_scale, (int)(640.0f * efb_scale + 0.5f), (int)(528.0f * efb_scale + 0.5f),
+           aspect_ratio == 1 ? "16:9 Widescreen" : "4:3 Standard");
 
     SDL_Window* window = SDL_CreateWindow(
         "Digimon Rumble Arena 2 - PC Port (Native Recompilation)",

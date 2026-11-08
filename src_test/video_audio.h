@@ -48,6 +48,9 @@ void video_present_snapshot(SDL_Renderer* renderer,CPUState* cpu,int window_w,in
 void video_set_xfb_addr(u32 addr);
 u32 video_get_xfb_addr(void);
 
+void video_set_aspect_ratio(int ratio);
+int video_get_aspect_ratio(void);
+
 // Shuts down SDL audio and destroys textures
 void video_audio_shutdown(void);
 

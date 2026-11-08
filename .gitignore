@@ -40,9 +40,15 @@ __pycache__/
 
 # Portable release output and user-owned portable data
 /DigimonRA2_PC/
+/distribution/release_package/
 /config/
 /saves/
 *.rvz
+
+# Local developer notes and prompts
+/.local_notes/
+CLAUDE.md
+*.prompt.txt
 
 # Historical local checkout; production dependencies are versioned in third_party/recomp-deps.
 /ModernGekko-Template/
