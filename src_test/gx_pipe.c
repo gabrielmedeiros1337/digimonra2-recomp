@@ -80,6 +80,13 @@ void gx_pipe_set_internal_scale(float scale) {
     }
 }
 float gx_pipe_get_internal_scale(void){return s_internal_scale;}
+static int s_aspect_ratio = 0;
+void gx_pipe_set_aspect_ratio(int ratio) {
+    s_aspect_ratio = (ratio == 1) ? 1 : 0;
+    gx_gl_set_aspect_ratio(s_aspect_ratio);
+    video_set_aspect_ratio(s_aspect_ratio);
+}
+int gx_pipe_get_aspect_ratio(void) { return s_aspect_ratio; }
 static bool resolve_xfb(CPUState* cpu,XFBImage* image) {
     if(!image->pending)return true;
     u32 offset=image->address-GC_RAM_BASE;
@@ -1180,7 +1187,13 @@ static void decode_vertex_input(CPUState* cpu, const VertexLayout* l, u32 cursor
         memcpy(view_position,transformed,sizeof(transformed));
         bool perspective = s_xf[0x1026] == 0;
         float w = perspective ? -transformed[2] : 1.0f;
-        float x = xf_float(0x1020)*transformed[0] + xf_float(0x1021)*(perspective ? transformed[2] : 1.0f);
+        float proj_sx = xf_float(0x1020);
+        float proj_ox = xf_float(0x1021);
+        if (s_aspect_ratio == 1 && !perspective) {
+            proj_sx *= 0.75f;
+            proj_ox *= 0.75f;
+        }
+        float x = proj_sx*transformed[0] + proj_ox*(perspective ? transformed[2] : 1.0f);
         float y = xf_float(0x1022)*transformed[1] + xf_float(0x1023)*(perspective ? transformed[2] : 1.0f);
         if (fabsf(w) > 0.000001f) {
             out->native.w=w;

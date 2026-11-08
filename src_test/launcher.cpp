@@ -17,7 +17,7 @@ extern "C" {
 namespace fs=std::filesystem;
 static LauncherConfig config;
 static HWND main_window,image_edit,ports[4],keyboard_check,keyboard_port,key_buttons[KEY_BIND_COUNT],status_label,play_button;
-static HWND vsync_check,window_mode_choice,window_res_choice,internal_res_choice;
+static HWND vsync_check,window_mode_choice,window_res_choice,internal_res_choice,aspect_ratio_choice;
 static std::vector<HWND> page_controls[4];
 static int building_page=-1,active_page=0;
 static HWND tab_buttons[4];
@@ -57,6 +57,7 @@ static void read_controls(){
  config.window_mode=int(SendMessageW(window_mode_choice,CB_GETCURSEL,0,0));
  config.window_resolution=int(SendMessageW(window_res_choice,CB_GETCURSEL,0,0));
  config.internal_resolution=int(SendMessageW(internal_res_choice,CB_GETCURSEL,0,0));
+ config.aspect_ratio=int(SendMessageW(aspect_ratio_choice,CB_GETCURSEL,0,0));
  config.vsync=SendMessageW(vsync_check,BM_GETCHECK,0,0)==BST_CHECKED;
  config.keyboard_enabled=SendMessageW(keyboard_check,BM_GETCHECK,0,0)==BST_CHECKED;config.keyboard_port=int(SendMessageW(keyboard_port,CB_GETCURSEL,0,0));
  for(int i=0;i<4;i++){int selected=int(SendMessageW(ports[i],CB_GETCURSEL,0,0));if(selected>=0&&selected<int(choices.size()))strcpy_s(config.ports[i],choices[selected].c_str());}
@@ -160,9 +161,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){
  for(int i=0;i<KEY_BIND_COUNT;i++)key_buttons[i]=button(L"",300+i,34+(i/5)*240,421+(i%5)*33,228,28);
  label(L"Teclado desabilitado = nenhum botão de teclado chega ao PAD. Esc fecha o jogo.",34,607,950,24);
  building_page=2;
- label(L"OPÇÕES DE APRESENTAÇÃO E VÍDEO",34,175,920,28);
- label(L"RESOLUÇÃO DA JANELA / TELA",34,208,920,20);
- window_res_choice=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,412,34,230,570,220);
+ label(L"OPÇÕES DE APRESENTAÇÃO E VÍDEO",34,168,920,26);
+ label(L"RESOLUÇÃO DA JANELA / TELA",34,196,920,18);
+ window_res_choice=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,412,34,216,570,220);
  const wchar_t* win_resolutions[]={
      L"640x480 (Padrão GameCube 4:3)",
      L"1280x720 (HD 720p)",
@@ -175,8 +176,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){
  for(auto r:win_resolutions)SendMessageW(window_res_choice,CB_ADDSTRING,0,(LPARAM)r);
  SendMessageW(window_res_choice,CB_SETCURSEL,config.window_resolution>=0&&config.window_resolution<7?config.window_resolution:1,0);
 
- label(L"RESOLUÇÃO INTERNA 3D (EFB SCALE)",34,272,920,20);
- internal_res_choice=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,413,34,294,570,220);
+ label(L"RESOLUÇÃO INTERNA 3D (EFB SCALE)",34,254,920,18);
+ internal_res_choice=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,413,34,274,570,220);
  const wchar_t* internal_resolutions[]={
      L"1x Nativa (640x528 - Padrão GameCube)",
      L"1.5x (~720p / 768p Notebooks - 960x792)",
@@ -187,15 +188,24 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int){
  for(auto r:internal_resolutions)SendMessageW(internal_res_choice,CB_ADDSTRING,0,(LPARAM)r);
  SendMessageW(internal_res_choice,CB_SETCURSEL,config.internal_resolution>=0&&config.internal_resolution<5?config.internal_resolution:0,0);
 
- label(L"MODO DE JANELA / TELA",34,336,920,20);
- window_mode_choice=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,411,34,358,570,180);
+ label(L"PROPORÇÃO DE TELA (ASPECT RATIO)",34,312,920,18);
+ aspect_ratio_choice=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,414,34,332,570,180);
+ const wchar_t* aspect_ratios[]={
+     L"4:3 (Padrão GameCube)",
+     L"16:9 (Widescreen Real)"
+ };
+ for(auto ar:aspect_ratios)SendMessageW(aspect_ratio_choice,CB_ADDSTRING,0,(LPARAM)ar);
+ SendMessageW(aspect_ratio_choice,CB_SETCURSEL,config.aspect_ratio==1?1:0,0);
+
+ label(L"MODO DE JANELA / TELA",34,370,920,18);
+ window_mode_choice=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,411,34,390,570,180);
  const wchar_t* modes[]={L"Janela (padrão)",L"Tela cheia sem bordas",L"Tela cheia exclusiva"};
  for(auto mode:modes)SendMessageW(window_mode_choice,CB_ADDSTRING,0,(LPARAM)mode);SendMessageW(window_mode_choice,CB_SETCURSEL,config.window_mode,0);
 
- label(L"Alt+Enter alterna entre janela e tela cheia mantendo aspect ratio 4:3 com letterbox/pillarbox.",34,402,950,22);
- vsync_check=control(L"BUTTON",L"Ativar VSync",BS_AUTOCHECKBOX|WS_TABSTOP,410,34,432,500,28);SendMessageW(vsync_check,BM_SETCHECK,config.vsync?BST_CHECKED:BST_UNCHECKED,0);
- label(L"VSync desligado por padrão. Renderização 3D em alta resolução 100% acelerada na GPU.",34,468,950,22);
- label(L"Efeitos visuais, HUD 2D e sombras preservados sem perda de 60 FPS.",34,494,950,22);
+ label(L"Alt+Enter alterna entre janela e tela cheia mantendo o aspect ratio configurado.",34,432,950,20);
+ vsync_check=control(L"BUTTON",L"Ativar VSync",BS_AUTOCHECKBOX|WS_TABSTOP,410,34,458,500,28);SendMessageW(vsync_check,BM_SETCHECK,config.vsync?BST_CHECKED:BST_UNCHECKED,0);
+ label(L"VSync desligado por padrão. Renderização 3D em alta resolução 100% acelerada na GPU.",34,490,950,20);
+ label(L"Efeitos visuais, HUD 2D e sombras preservados sem perda de 60 FPS.",34,514,950,20);
  building_page=3;
  label(L"OBRIGADO POR BAIXAR!",34,212,570,36);
  label(L"Que bom ter você de volta à arena.",34,264,570,28);

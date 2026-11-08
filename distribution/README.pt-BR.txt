@@ -63,7 +63,8 @@ ABAS DO LAUNCHER
 Jogar: dump original, botão JOGAR e acesso aos saves.
 Controles: portas 1–4, dispositivos e mapeamento de teclado.
 Opções: Resolução da janela (640x480 até 4K UHD), Resolução interna 3D / EFB Scale
-(1x Nativa até 4x Quad HD na GPU), VSync opcional e Modo de tela.
+(1x Nativa até 4x Quad HD na GPU), Proporção de Tela / Aspect Ratio (4:3 padrão ou 16:9
+Widescreen real via Hor+), VSync opcional e Modo de tela.
 FreeSync/VRR permanece sob controle do monitor/driver; o jogo continua a 60 FPS.
 Créditos: agradecimento, Agumon e link clicável para o repositório.
 

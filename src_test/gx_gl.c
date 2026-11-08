@@ -193,6 +193,15 @@ void gx_gl_set_internal_scale(float scale){
     }
 }
 float gx_gl_get_internal_scale(void){return s_internal_scale;}
+static int s_aspect_ratio = 0;
+void gx_gl_set_aspect_ratio(int ratio){
+    int r = (ratio == 1) ? 1 : 0;
+    if(s_aspect_ratio != r){
+        s_aspect_ratio = r;
+        s_xf_values_valid = false;
+    }
+}
+int gx_gl_get_aspect_ratio(void){return s_aspect_ratio;}
 static u64 geometry_hash(const GXGLRawVertex* source,u32 count){
     s_stats.geometry_hashes++;
 #if defined(DIGIMON_XXHASH)
@@ -322,7 +331,17 @@ static void upload_xf(const GXGLTransform* transform,bool cache_values) {
         }
         gUniform4iv(s_xf_u.texInfo,8,&info[0][0]);gUniform4iv(s_xf_u.postInfo,8,&post[0][0]);s_stats.xf_uniform_blocks+=2;
     }
-    if(DIRTY(0x1020,8)){memcpy(data,x+0x1020,8*sizeof(float));gUniform4fv(s_xf_u.projectionData,2,data);gUniform1i(s_xf_u.perspective,x[0x1026]==0);s_stats.xf_uniform_blocks+=2;}
+    if(DIRTY(0x1020,8) || DIRTY(0x101A,1)){
+        memcpy(data,x+0x1020,8*sizeof(float));
+        if(s_aspect_ratio == 1 && x[0x1026] != 0) {
+            // Un-stretch 2D orthographic UI (HUD, portraits, selection boxes) centered at screen center (320):
+            data[0] *= 0.75f;
+            data[1] *= 0.75f;
+        }
+        gUniform4fv(s_xf_u.projectionData,2,data);
+        gUniform1i(s_xf_u.perspective,x[0x1026]==0);
+        s_stats.xf_uniform_blocks+=2;
+    }
     if(DIRTY(0x101A,6)){GLfloat scale[4]={0},offset[4]={0};memcpy(scale,x+0x101A,3*sizeof(float));memcpy(offset,x+0x101D,3*sizeof(float));gUniform4fv(s_xf_u.viewportScale,1,scale);gUniform4fv(s_xf_u.viewportOffset,1,offset);s_stats.xf_uniform_blocks+=2;}
     if(fresh || transform->projection!=s_last_xf.projection){gUniform1i(s_xf_u.hasProjection,transform->projection);s_stats.xf_uniform_blocks++;}
     if(fresh || transform->lighting!=s_last_xf.lighting){gUniform1i(s_xf_u.hasLighting,transform->lighting);s_stats.xf_uniform_blocks++;}

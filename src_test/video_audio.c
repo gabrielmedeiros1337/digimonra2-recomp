@@ -501,9 +501,19 @@ void video_set_di_interrupt(bool pending) {
     else s_pi_cause &= ~4u;
 }
 
+static int s_aspect_ratio = 0;
+void video_set_aspect_ratio(int ratio) { s_aspect_ratio = (ratio == 1) ? 1 : 0; }
+int video_get_aspect_ratio(void) { return s_aspect_ratio; }
+
 void video_present_snapshot(SDL_Renderer* renderer, CPUState* cpu, int window_w, int window_h,const VideoXFB* image) {
-    int h = window_h, w = h * 4 / 3;
-    if (w > window_w) { w = window_w; h = w * 3 / 4; }
+    int h = window_h, w;
+    if (s_aspect_ratio == 1) {
+        w = h * 16 / 9;
+        if (w > window_w) { w = window_w; h = w * 9 / 16; }
+    } else {
+        w = h * 4 / 3;
+        if (w > window_w) { w = window_w; h = w * 3 / 4; }
+    }
     SDL_Rect dest = { (window_w - w) / 2, (window_h - h) / 2, w, h };
     if(gx_pipe_present_xfb(renderer,image->address,&dest))return;
     if (!s_xfb_texture || image->address < GC_RAM_BASE) return;
