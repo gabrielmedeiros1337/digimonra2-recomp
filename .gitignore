@@ -43,3 +43,6 @@ __pycache__/
 /config/
 /saves/
 *.rvz
+
+# Historical local checkout; production dependencies are versioned in third_party/recomp-deps.
+/ModernGekko-Template/

@@ -12,7 +12,7 @@ def package(source: Path, binary: Path, output: Path) -> dict:
     source, binary, output = source.resolve(), binary.resolve(), output.resolve()
     if output in (source, binary) or output == output.parent:
         raise ValueError("Output must be a separate package directory")
-    vendor = source / "ModernGekko-Template/lib/ModernGekko/vendor/dolphin"
+    vendor = source / "third_party/recomp-deps/dolphin"
     external = vendor / "Externals"
     files = {
         "DigimonRA2.exe": binary / "DigimonRA2.exe",
@@ -24,7 +24,7 @@ def package(source: Path, binary: Path, output: Path) -> dict:
         "config/runtime_tuning.cfg": source / "distribution/config/runtime_tuning.cfg",
         "config/dispatch_chain.cfg": source / "distribution/config/dispatch_chain.cfg",
         "LICENSES/SDL2.txt": source / "third_party/SDL2/LICENSE.txt",
-        "LICENSES/DolRecomp.txt": source / "ModernGekko-Template/lib/DolRecomp/LICENSE",
+        "LICENSES/DolRecomp.txt": source / "third_party/recomp-deps/DolRecomp/LICENSE",
         "LICENSES/Dolphin.txt": vendor / "COPYING",
         "LICENSES/picojson.txt": external / "picojson/LICENSE",
         "LICENSES/bzip2.txt": external / "bzip2/bzip2/LICENSE",

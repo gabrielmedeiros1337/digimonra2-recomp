@@ -1,5 +1,5 @@
 # Separate startup/storage/launcher layer. Frozen CPU/GX target options are unchanged.
-set(DOLPHIN_EXTERNALS "${CMAKE_CURRENT_SOURCE_DIR}/ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Externals")
+set(DOLPHIN_EXTERNALS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/recomp-deps/dolphin/Externals")
 function(dolphin_disable_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W0)
@@ -51,3 +51,4 @@ add_executable(display_mode_contracts src_test/display_mode_tests.c src_test/dis
 target_link_libraries(display_mode_contracts PRIVATE "${SDL2_DIR}/lib/x64/SDL2.lib")
 add_custom_command(TARGET display_mode_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:display_mode_contracts>")
 add_test(NAME display_mode_contracts COMMAND display_mode_contracts)
+add_test(NAME dependency_snapshot_contracts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_dependencies.py")

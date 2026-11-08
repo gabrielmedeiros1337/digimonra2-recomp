@@ -34,7 +34,7 @@ def opcode_key(word):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--dol", type=Path, default=Path("extracted/sys/main.dol"))
-    p.add_argument("--db", type=Path, default=Path("ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Data/Sys/totaldb.dsy"))
+    p.add_argument("--db", type=Path, default=Path("third_party/recomp-deps/dolphin/Data/Sys/totaldb.dsy"))
     p.add_argument("--output", type=Path, default=Path("build_test/sdk_signature_candidates.json"))
     args = p.parse_args()
     data = args.db.read_bytes()

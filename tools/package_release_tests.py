@@ -13,10 +13,10 @@ spec.loader.exec_module(module)
 required = [
     "distribution/README.pt-BR.txt", "distribution/config/launcher_config.json",
     "distribution/config/runtime_tuning.cfg", "distribution/config/dispatch_chain.cfg",
-    "third_party/SDL2/LICENSE.txt", "ModernGekko-Template/lib/DolRecomp/LICENSE",
-    "ModernGekko-Template/lib/ModernGekko/vendor/dolphin/COPYING",
+    "third_party/SDL2/LICENSE.txt", "third_party/recomp-deps/DolRecomp/LICENSE",
+    "third_party/recomp-deps/dolphin/COPYING",
 ]
-external = "ModernGekko-Template/lib/ModernGekko/vendor/dolphin/Externals/"
+external = "third_party/recomp-deps/dolphin/Externals/"
 required += [external + p for p in ("picojson/LICENSE", "bzip2/bzip2/LICENSE", "liblzma/COPYING", "zstd/zstd/LICENSE")]
 scratch_root = (root / "build_test").resolve()
 with tempfile.TemporaryDirectory(prefix="package_contract_", dir=scratch_root) as temporary:
