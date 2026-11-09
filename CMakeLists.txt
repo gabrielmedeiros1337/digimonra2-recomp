@@ -102,6 +102,7 @@ else()
         dl
         pthread
     )
+    link_libraries(m pthread dl)
 endif()
 
 if(MSVC)

@@ -8,6 +8,8 @@
 #include <strings.h>
 #define strcpy_s(dst, src) strncpy((dst), (src), sizeof(dst) - 1)
 #define _stricmp strcasecmp
+#define _fseeki64 fseeko
+#define _ftelli64 ftello
 #endif
 #ifdef __cplusplus
 extern "C" {
