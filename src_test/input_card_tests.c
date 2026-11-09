@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #define _mkdir(d) mkdir(d, 0755)
+#define _rmdir rmdir
 #define _getpid getpid
 #endif
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL input/CARD line %d: %s\n",__LINE__,#x);return 1;}}while(0)
