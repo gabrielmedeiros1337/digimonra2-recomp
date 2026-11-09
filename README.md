@@ -1,4 +1,7 @@
-# Digimon Rumble Arena 2 — PC Port
+# Digimon Rumble Arena 2 — Recompiled
+
+<img width="2400" height="1340" alt="digimonlogo" src="https://github.com/user-attachments/assets/6be5819f-542f-488b-8193-082a5e78d862" />
+
 
 Port nativo para PC (Windows e Linux x86_64) de **Digimon Rumble Arena 2** (GameCube USA - `GD6E01`), desenvolvido via recompilação estática do código de máquina PowerPC Gekko para C/C++ nativo, com backend gráfico desacoplado em OpenGL 3.3, subsistema de entrada/áudio SDL2 e execução cravada a **60 FPS nativos**.
 
