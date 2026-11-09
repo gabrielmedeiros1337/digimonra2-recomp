@@ -4,8 +4,14 @@
 #include "disc_image.h"
 #include "game_revision.h"
 #include "portable_config.h"
+#ifdef _WIN32
 #include <windows.h>
 #include <bcrypt.h>
+#else
+#include <openssl/sha.h>
+#define BCRYPT_SHA1_ALGORITHM "SHA1"
+#define BCRYPT_SHA256_ALGORITHM "SHA256"
+#endif
 #include <bzlib.h>
 #include <lzma.h>
 #include <zstd.h>
@@ -19,17 +25,29 @@
 using U8=uint8_t;using U32=uint32_t;using U64=uint64_t;
 static U32 be32(const U8* p){return (U32(p[0])<<24)|(U32(p[1])<<16)|(U32(p[2])<<8)|p[3];}
 static U64 be64(const U8* p){return U64(be32(p))<<32|be32(p+4);}
+#ifdef _WIN32
 static bool digest(const U8* p,size_t n,LPCWSTR algorithm,U8* out,ULONG count){
     BCRYPT_ALG_HANDLE a=nullptr;if(n>ULONG_MAX||BCryptOpenAlgorithmProvider(&a,algorithm,nullptr,0)<0)return false;
     NTSTATUS s=BCryptHash(a,nullptr,0,const_cast<U8*>(p),ULONG(n),out,count);BCryptCloseAlgorithmProvider(a,0);return s>=0;
 }
+#else
+static bool digest(const U8* p,size_t n,const char* algorithm,U8* out,unsigned long count){
+    if(count==20){SHA1(p,n,out);return true;}
+    if(count==32){SHA256(p,n,out);return true;}
+    return false;
+}
+#endif
 struct DiscImage {
     FILE* file=nullptr;U64 length=0,logical=0;int kind=0;U32 chunk=0,codec=0;std::array<U8,0xdc> h{};
     struct Raw{U64 offset,size;U32 group,count;};struct Group{U64 offset;U32 size,packed;};
     std::vector<Raw> raw;std::vector<Group> groups;std::vector<U64> ciso;
     struct Cache{U32 group=UINT32_MAX;U64 age=0;std::vector<U8> bytes;};std::array<Cache,4> cache;U64 age=0;
     ~DiscImage(){if(file)fclose(file);}
+#ifdef _WIN32
     bool read_file(U64 at,void* dst,size_t n){return at<=length&&n<=length-at&&_fseeki64(file,at,SEEK_SET)==0&&fread(dst,1,n,file)==n;}
+#else
+    bool read_file(U64 at,void* dst,size_t n){return at<=length&&n<=length-at&&fseeko(file,at,SEEK_SET)==0&&fread(dst,1,n,file)==n;}
+#endif
     bool decompress(U64 at,U32 stored,size_t expected,U32 method,std::vector<U8>& out){
         if(expected>64*1024*1024||stored>64*1024*1024)return false;
         std::vector<U8> in(stored);out.resize(expected);if(!read_file(at,in.data(),stored))return false;
@@ -84,7 +102,12 @@ struct DiscImage {
 static DiscImage* error(DiscImage* i,char* e,size_t cap,const char* why){if(e&&cap)snprintf(e,cap,"%s",why);delete i;return nullptr;}
 DiscImage* disc_image_open(const char* path,char* e,size_t cap){
     DiscImage* d=new DiscImage;d->file=portable_fopen(path,"rb");if(!d->file)return error(d,e,cap,"Cannot open disc image.");
-    _fseeki64(d->file,0,SEEK_END);auto end=_ftelli64(d->file);if(end<0)return error(d,e,cap,"Cannot determine image size.");d->logical=d->length=U64(end);
+#ifdef _WIN32
+    _fseeki64(d->file,0,SEEK_END);auto end=_ftelli64(d->file);
+#else
+    fseeko(d->file,0,SEEK_END);auto end=ftello(d->file);
+#endif
+    if(end<0)return error(d,e,cap,"Cannot determine image size.");d->logical=d->length=U64(end);
     U8 header[0x48];if(!d->read_file(0,header,sizeof(header)))return error(d,e,cap,"Truncated image header.");
     if(!memcmp(header,"CISO",4)){
         d->kind=1;d->chunk=U32(header[4])|(U32(header[5])<<8)|(U32(header[6])<<16)|(U32(header[7])<<24);

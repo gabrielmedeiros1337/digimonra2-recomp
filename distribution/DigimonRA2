@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Digimon Rumble Arena 2 - Linux Launcher Wrapper
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Ensure game binary is executable
+chmod +x ./digimon_test 2>/dev/null || true
+
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 tools/linux_launcher.py "$@"
+else
+    echo "Python 3 / Tkinter not detected. Starting game directly..."
+    exec ./digimon_test --portable "$@"
+fi

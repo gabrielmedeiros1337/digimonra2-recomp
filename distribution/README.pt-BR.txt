@@ -1,4 +1,4 @@
-DIGIMON RUMBLE ARENA 2 — PC NATIVO
+DIGIMON RUMBLE ARENA 2 — PC PORT
 
 Abra DigimonRA2.exe. Clique em Procurar, selecione seu dump original USA,
 configure as quatro portas e clique em JOGAR. Não há ROM, DOL ou assets do
@@ -66,7 +66,7 @@ Opções: Resolução da janela (640x480 até 4K UHD), Resolução interna 3D / 
 (1x Nativa até 4x Quad HD na GPU), Proporção de Tela / Aspect Ratio (4:3 padrão ou 16:9
 Widescreen real via Hor+), VSync opcional e Modo de tela.
 FreeSync/VRR permanece sob controle do monitor/driver; o jogo continua a 60 FPS.
-Créditos: agradecimento, Agumon e link clicável para o repositório.
+Créditos: informações técnicas do projeto, autoria de Gabriel Medeiros e repositório oficial.
 
 MODO DE TELA / ALT+ENTER
 Na aba Opções, escolha Janela (padrão), Tela cheia sem bordas ou Tela cheia
@@ -76,3 +76,8 @@ recupera seu tamanho anterior. Se iniciar em Janela, o atalho usa sem bordas.
 A tela cheia exclusiva usa a resolução e frequência atuais do monitor.
 FreeSync depende do suporte/configuração do monitor, GPU e driver; selecionar
 um modo de tela no launcher não habilita FreeSync por conta própria.
+
+Unlock All: aplica a mascara em RAM a cada VBlank. Reinicie o jogo para aplicar
+a mudanca da opcao. Enquanto ativo, saves e ajustes ficam apenas na memoria
+da sessao; o cartao original em saves/MemoryCardA.card permanece intacto.
+Desativado, o jogo carrega o cartao original e salva normalmente.

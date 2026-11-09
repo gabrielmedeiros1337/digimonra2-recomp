@@ -3,6 +3,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#ifndef _WIN32
+#include <string.h>
+#include <strings.h>
+#define strcpy_s(dst, src) strncpy((dst), (src), sizeof(dst) - 1)
+#define _stricmp strcasecmp
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -20,6 +26,8 @@ typedef struct {
     int window_resolution; /* 0: 640x480, 1: 1280x720, 2: 1366x768, 3: 1600x900, 4: 1920x1080, 5: 2560x1440, 6: 3840x2160 */
     int internal_resolution; /* 0: 1x (640x528), 1: 1.5x (960x792), 2: 2x (1280x1056), 3: 3x (1920x1584), 4: 4x (2560x2112) */
     int aspect_ratio; /* 0: 4:3 (Padrão GameCube), 1: 16:9 (Widescreen Real) */
+    bool unlock_all; /* Unlock all secret characters, stages and modes dynamically */
+    char language[16]; /* "pt-BR" or "en" */
 } LauncherConfig;
 extern const char* const launcher_key_names[KEY_BIND_COUNT];
 void launcher_config_defaults(LauncherConfig* config);

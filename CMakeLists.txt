@@ -85,11 +85,24 @@ add_executable(digimon_test
 
 target_compile_definitions(digimon_test PRIVATE DOLRECOMP_RAM_TRACKING=0)
 
-target_link_libraries(digimon_test PRIVATE
-    opengl32
-    "${SDL2_DIR}/lib/x64/SDL2.lib"
-    "${SDL2_DIR}/lib/x64/SDL2main.lib"
-)
+if(WIN32)
+    target_link_libraries(digimon_test PRIVATE
+        opengl32
+        "${SDL2_DIR}/lib/x64/SDL2.lib"
+        "${SDL2_DIR}/lib/x64/SDL2main.lib"
+    )
+    enable_language(RC)
+    target_sources(digimon_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/assets/app_icon.rc")
+    target_include_directories(digimon_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+else()
+    target_link_libraries(digimon_test PRIVATE
+        GL
+        SDL2
+        m
+        dl
+        pthread
+    )
+endif()
 
 if(MSVC)
     # Runtime/reference contracts retain stack headroom. Production chunk
@@ -200,6 +213,18 @@ if(MSVC)
             target_link_options(digimon_test PRIVATE "$<$<CONFIG:Release>:/USEPROFILE:PGD=${PGO_USE_DATABASE}>")
         endif()
     endif()
+else()
+    target_compile_options(digimon_test PRIVATE -O3 -fno-stack-protector -ffast-math -pthread -w)
+    target_link_options(digimon_test PRIVATE -pthread)
+    foreach(CHUNK_SOURCE IN LISTS CHUNK_SOURCES)
+        set_property(SOURCE "${CHUNK_SOURCE}" APPEND PROPERTY COMPILE_OPTIONS "-include" "primary_ram.h" "-include" "hot_float_adapter.h")
+        if(CHUNK_SOURCE MATCHES "_(8023B4C0|802474C0|8024B4C0)\\.c$")
+            set_property(SOURCE "${CHUNK_SOURCE}" APPEND PROPERTY COMPILE_OPTIONS "-include" "native_copy_adapter.h")
+        endif()
+        if(CHUNK_SOURCE MATCHES "_(8028B4C0|8029B4C0)\\.c$")
+            set_property(SOURCE "${CHUNK_SOURCE}" PROPERTY COMPILE_DEFINITIONS DOLRECOMP_CPU_HEADER="cpu_math_adapter.h")
+        endif()
+    endforeach()
 endif()
 
 set(XXHASH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/recomp-deps/dolphin/Externals/xxhash/xxHash")
@@ -209,9 +234,11 @@ if(EXISTS "${XXHASH_DIR}/xxhash.h")
 endif()
 
 # The executable must find the same SDL version used at link time.
-add_custom_command(TARGET digimon_test POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:digimon_test>")
+if(WIN32)
+    add_custom_command(TARGET digimon_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:digimon_test>")
+endif()
 if(MSVC)
     add_custom_command(TARGET digimon_test POST_BUILD
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/inspect_chunk_stacks.py"
@@ -254,11 +281,15 @@ add_test(NAME platform_contracts_opengl COMMAND digimon_test --self-test)
 set_tests_properties(platform_contracts_opengl PROPERTIES ENVIRONMENT "TEST_OPENGL=1")
 
 add_executable(vertex_completion_contracts src_test/vertex_completion_tests.c src_test/vertex_completion.c)
-target_link_libraries(vertex_completion_contracts PRIVATE "${SDL2_DIR}/lib/x64/SDL2.lib")
+if(WIN32)
+    target_link_libraries(vertex_completion_contracts PRIVATE "${SDL2_DIR}/lib/x64/SDL2.lib")
+    add_custom_command(TARGET vertex_completion_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:vertex_completion_contracts>")
+else()
+    target_link_libraries(vertex_completion_contracts PRIVATE SDL2 m dl pthread)
+endif()
 if(MSVC)
     target_compile_options(vertex_completion_contracts PRIVATE /O2 /W3 /wd4996)
 endif()
-add_custom_command(TARGET vertex_completion_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:vertex_completion_contracts>")
 add_test(NAME vertex_completion_contracts COMMAND vertex_completion_contracts)
 
 # Independent SDK oracle: the unchanged generated instruction sequence, test-only.
@@ -325,11 +356,15 @@ if(MSVC)
 endif()
 add_test(NAME native_float_contracts COMMAND native_float_contracts)
 add_executable(gx_gpu_xf_contracts src_test/gx_gl_xf_tests.c src_test/gx_gl.c src_test/frame_timing.c)
-target_link_libraries(gx_gpu_xf_contracts PRIVATE opengl32 "${SDL2_DIR}/lib/x64/SDL2.lib")
+if(WIN32)
+    target_link_libraries(gx_gpu_xf_contracts PRIVATE opengl32 "${SDL2_DIR}/lib/x64/SDL2.lib")
+    add_custom_command(TARGET gx_gpu_xf_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:gx_gpu_xf_contracts>")
+else()
+    target_link_libraries(gx_gpu_xf_contracts PRIVATE GL SDL2 m dl pthread)
+endif()
 if(MSVC)
     target_compile_options(gx_gpu_xf_contracts PRIVATE /O2 /W3 /wd4996)
 endif()
-add_custom_command(TARGET gx_gpu_xf_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:gx_gpu_xf_contracts>")
 add_test(NAME gx_gpu_xf_contracts COMMAND gx_gpu_xf_contracts)
 
 # Independent oracle copied from the protected generated source, never patched there.
@@ -424,8 +459,12 @@ if(MSVC)
 endif()
 add_test(NAME native_top_contracts COMMAND native_top_contracts)
 add_executable(gx_async_contracts src_test/gx_decode_async_tests.c src_test/gx_decode_async.c)
-target_link_libraries(gx_async_contracts PRIVATE "${SDL2_DIR}/lib/x64/SDL2.lib")
-add_custom_command(TARGET gx_async_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:gx_async_contracts>")
+if(WIN32)
+    target_link_libraries(gx_async_contracts PRIVATE "${SDL2_DIR}/lib/x64/SDL2.lib")
+    add_custom_command(TARGET gx_async_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:gx_async_contracts>")
+else()
+    target_link_libraries(gx_async_contracts PRIVATE SDL2 m dl pthread)
+endif()
 add_test(NAME gx_async_contracts COMMAND gx_async_contracts)
 
 add_executable(hot_float_contracts src_test/hot_float_tests.c src_test/hot_float.c src_test/native_float.c ${CPU_SOURCES})
@@ -445,11 +484,12 @@ add_test(NAME gx_images_contracts COMMAND gx_images_contracts)
 
 
 add_executable(frame_pipeline_contracts src_test/frame_pipeline_tests.c src_test/gx_frame.c src_test/cpu_frame.c src_test/frame_timing.c)
-target_link_libraries(frame_pipeline_contracts PRIVATE "${SDL2_DIR}/lib/x64/SDL2.lib")
-if(MSVC)
-    target_compile_options(frame_pipeline_contracts PRIVATE /O2 /W3)
+if(WIN32)
+    target_link_libraries(frame_pipeline_contracts PRIVATE "${SDL2_DIR}/lib/x64/SDL2.lib")
+    add_custom_command(TARGET frame_pipeline_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:frame_pipeline_contracts>")
+else()
+    target_link_libraries(frame_pipeline_contracts PRIVATE SDL2 m dl pthread)
 endif()
-add_custom_command(TARGET frame_pipeline_contracts POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDL2_DIR}/lib/x64/SDL2.dll" "$<TARGET_FILE_DIR:frame_pipeline_contracts>")
 add_test(NAME frame_pipeline_contracts COMMAND frame_pipeline_contracts)
 
 add_executable(pc_dse_contracts src_test/pc_dse_tests.c src_test/chunk_memory.c "${PC_DSE_DIR}/pc_dse_reference.c" ${CPU_SOURCES})

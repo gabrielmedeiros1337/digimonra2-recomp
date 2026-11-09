@@ -1,0 +1,56 @@
+name: Linux Release (x86_64)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            libsdl2-dev \
+            libgl1-mesa-dev \
+            libssl-dev \
+            python3 \
+            python3-tk
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build digimon_test
+        run: |
+          cmake --build build --target digimon_test --config Release
+
+      - name: Run contract tests
+        run: |
+          ctest --test-dir build -C Release --output-on-failure -E "package_release_contracts|platform_contracts"
+
+      - name: Create Linux portable release package
+        run: |
+          python3 tools/package_linux.py \
+            --source . \
+            --binary-dir build \
+            --output DigimonRA2_PC_Linux
+
+      - name: Upload Linux Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DigimonRA2_PC_Linux_x64
+          path: DigimonRA2_PC_Linux_x64.tar.gz
+          if-no-files-found: error

@@ -5,6 +5,8 @@
   "window_resolution": 1,
   "internal_resolution": 0,
   "aspect_ratio": 0,
+  "unlock_all": false,
+  "language": "pt-BR",
   "image_path": "",
   "keyboard_enabled": true,
   "keyboard_port": 0,

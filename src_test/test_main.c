@@ -32,6 +32,7 @@
 #include "sdk_vec.h"
 #include "native_copy.h"
 #include "ax_hle.h"
+#include "app_icon_rgba.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -50,7 +51,20 @@ static LONG WINAPI log_host_exception(EXCEPTION_POINTERS* exception) {
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
+#else
+#include <unistd.h>
+#ifndef _byteswap_ushort
+#define _byteswap_ushort __builtin_bswap16
 #endif
+#ifndef _byteswap_ulong
+#define _byteswap_ulong __builtin_bswap32
+#endif
+#ifndef _byteswap_uint64
+#define _byteswap_uint64 __builtin_bswap64
+#endif
+#endif
+
+static bool s_unlock_all = false;
 
 static void diagnose_lua_error(CPUState* cpu) {
     if(cpu->pc<0x8026270Cu || cpu->pc>0x80262718u)return;
@@ -1072,13 +1086,34 @@ int main(int argc, char** argv) {
         char base[LAUNCHER_PATH_MAX];wchar_t root[LAUNCHER_PATH_MAX];
         if(!portable_executable_root(base,sizeof(base))||!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,base,-1,root,LAUNCHER_PATH_MAX)||!SetCurrentDirectoryW(root))return 1;
     }
+#else
+    if(portable_mode){
+        for(int i=1;i+1<argc;i++)if(!strcmp(argv[i],"--disc"))strncpy(selected_disc,argv[++i],sizeof(selected_disc)-1);
+        char base[LAUNCHER_PATH_MAX];
+        if(portable_executable_root(base,sizeof(base))){
+            if(chdir(base)!=0){/* ignore */}
+        }
+    }
 #endif
     LauncherConfig launch_config;char config_error[256];
     if(!launcher_config_load("config/launcher_config.json",&launch_config,config_error,sizeof(config_error))){
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Launcher configuration",config_error,NULL);return 1;
     }
     input_configure(&launch_config);
-    card_store_init("saves");card_hle_reset();
+    if (launch_config.unlock_all) s_unlock_all = true;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--unlock-all")) s_unlock_all = true;
+        else if (!strcmp(argv[i], "--no-unlock-all")) s_unlock_all = false;
+    }
+    printf("[Engine] unlock_all=%d (config=%d; command-line overrides applied)\n",
+           s_unlock_all, launch_config.unlock_all);
+    card_store_init("saves");
+    /* RAM unlock flags are part of the game's serialized progress. Keep CARD
+       writes in this session only, so autosave cannot persist the forced mask. */
+    card_store_set_volatile(s_unlock_all);
+    printf("[Engine] Unlock All: %s; CARD storage: %s\n",
+           s_unlock_all ? "ON" : "OFF", s_unlock_all ? "session only" : "persistent");
+    card_hle_reset();
     const char* tuning_path=portable_mode?"config/runtime_tuning.cfg":"build_test/runtime_tuning.cfg";
     const char* chain_path=portable_mode?"config/dispatch_chain.cfg":"build_test/dispatch_chain.cfg";
     if(portable_mode){
@@ -1149,6 +1184,23 @@ int main(int argc, char** argv) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Digimon Recomp", err, NULL);
         SDL_Quit();
         return 1;
+    }
+
+    SDL_Surface* icon_surface = SDL_CreateRGBSurfaceFrom(
+        (void*)app_icon_rgba_pixels,
+        APP_ICON_WIDTH,
+        APP_ICON_HEIGHT,
+        32,
+        APP_ICON_WIDTH * 4,
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+        0xff000000, 0x00ff0000, 0x0000ff00, 0x000000ff
+#else
+        0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000
+#endif
+    );
+    if (icon_surface) {
+        SDL_SetWindowIcon(window, icon_surface);
+        SDL_FreeSurface(icon_surface);
     }
 
     DisplayModeState display_mode;
@@ -1271,7 +1323,7 @@ int main(int argc, char** argv) {
         if(!continuing){s_total_frames++;s_current_frame_num++;}
 
 
-        // Auto-exit de teste removido para garantir que a janela fique aberta continuamente
+        // Main application event loop
 
         // Poll OS events
         while (SDL_PollEvent(&event)) {
@@ -1290,7 +1342,7 @@ int main(int argc, char** argv) {
         }
         input_poll();
 
-        // 1-line debug log requested by user when any button is pressed:
+        // Log gamepad button state transitions
         const NativePadState* p0 = input_get_pad(0);
         static u16 s_last_logged_button = 0;
         if (p0->button != 0 && p0->button != s_last_logged_button) {
@@ -1300,7 +1352,27 @@ int main(int argc, char** argv) {
         s_last_logged_button = p0->button;
 
         // Trigger 60Hz VBLANK (VI Retrace)
-        if(!continuing)video_trigger_vblank(&cpu);
+        if (!continuing) {
+            video_trigger_vblank(&cpu);
+            if (s_unlock_all && cpu.ram) {
+                /* Verified in generated chunk_0063/0064 and chunk_0087:
+                   progress = 0x80360000 - 25052 = 0x80359E24.
+                   +2672: 10 character/arena flags; +2712: 7 mode flags.
+                   0x800FDC84 and 0x80100498 read these exact arrays.
+                   0x8015BAFC/0x8015BB1C implement the game's own Unlock All.
+                   See docs/unlock_all.md. CPU worker is idle here. */
+                const u32 unlock_base = 0x8035A894u - GC_RAM_BASE;
+                if (unlock_base + 17u * 4u <= cpu.ram_size) {
+                    u8* p = cpu.ram + unlock_base;
+                    for (u32 i = 0; i < 17; i++) {
+                        p[i * 4 + 0] = 0;
+                        p[i * 4 + 1] = 0;
+                        p[i * 4 + 2] = 0;
+                        p[i * 4 + 3] = 1;
+                    }
+                }
+            }
+        }
         if(managed_frame && !continuing)guest_frame_begin(&guest_budget,cpu.timebase,gx_pipe_get_submitted_display_copies());
 
         // Audio thread (0x80667F08) and DefThread (0x803B3050) scheduling synchronization:

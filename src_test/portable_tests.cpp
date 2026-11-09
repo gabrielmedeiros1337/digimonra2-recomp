@@ -1,8 +1,13 @@
 #include "portable_config.h"
 #include "disc_image.h"
 #include "card_store.h"
+#ifdef _WIN32
 #include <windows.h>
 #include <bcrypt.h>
+#else
+#include <unistd.h>
+#include <openssl/sha.h>
+#endif
 #include <bzlib.h>
 #include <lzma.h>
 #include <zstd.h>
@@ -17,7 +22,11 @@ namespace fs=std::filesystem;
 using Byte=unsigned char;using Bytes=std::vector<Byte>;
 static void put32(Bytes& b,size_t at,uint32_t v){for(int i=0;i<4;i++)b[at+i]=Byte(v>>(24-i*8));}
 static void put64(Bytes& b,size_t at,uint64_t v){put32(b,at,uint32_t(v>>32));put32(b,at+4,uint32_t(v));}
+#ifdef _WIN32
 static void sha(const Byte* p,size_t n,Byte* out){BCRYPT_ALG_HANDLE a=nullptr;BCryptOpenAlgorithmProvider(&a,BCRYPT_SHA1_ALGORITHM,nullptr,0);BCryptHash(a,nullptr,0,const_cast<Byte*>(p),ULONG(n),out,20);BCryptCloseAlgorithmProvider(a,0);}
+#else
+static void sha(const Byte* p,size_t n,Byte* out){SHA1(p,n,out);}
+#endif
 static Bytes compress(const Bytes& b,int codec){
  if(!codec)return b;Bytes out(b.size()*2+4096);
  if(codec==5){size_t n=ZSTD_compress(out.data(),out.size(),b.data(),b.size(),3);if(ZSTD_isError(n))return {};out.resize(n);}
@@ -42,11 +51,16 @@ static Bytes rvz_fixture(const Bytes& raw,int codec,bool packing){
 int main(int argc,char** argv){
  char error[512];
  if(argc==2){DiscImage* d=disc_image_open(argv[1],error,sizeof(error));CHECK(d);CHECK(disc_image_validate_game(d,error,sizeof(error)));void* dol=nullptr;size_t size=0;CHECK(disc_image_dol(d,&dol,&size)&&size==3525376);free(dol);disc_image_close(d);puts("Original image identity and embedded DOL passed");return 0;}
- auto dir=fs::current_path()/std::to_string(GetCurrentProcessId());fs::create_directory(dir);fs::current_path(dir);
+#ifdef _WIN32
+ auto dir=fs::current_path()/std::to_string(GetCurrentProcessId());
+#else
+ auto dir=fs::current_path()/std::to_string(getpid());
+#endif
+ fs::create_directory(dir);fs::current_path(dir);
  LauncherConfig a,b;launcher_config_defaults(&a);strcpy_s(a.image_path,"C:/Jogos/日本語 e ação/jogo.rvz");a.keyboard_enabled=false;a.keyboard_port=3;strcpy_s(a.ports[0],"none");strcpy_s(a.ports[3],"keyboard");a.keys[0]=80;
- CHECK(!a.vsync&&a.window_mode==0&&a.window_resolution==1&&a.internal_resolution==0&&a.aspect_ratio==0);a.vsync=true;a.window_mode=2;a.window_resolution=4;a.internal_resolution=3;a.aspect_ratio=1;
- CHECK(launcher_config_save("launcher.json",&a,error,sizeof(error)));CHECK(launcher_config_load("launcher.json",&b,error,sizeof(error)));CHECK(!strcmp(a.image_path,b.image_path)&&!b.keyboard_enabled&&b.keyboard_port==3&&b.keys[0]==80&&b.vsync&&b.window_mode==2&&b.window_resolution==4&&b.internal_resolution==3&&b.aspect_ratio==1);
- {const char* legacy=R"({"image_path":"","keyboard_enabled":true,"keyboard_port":0,"ports":["keyboard","none","none","none"],"keys":[29,27,6,25,43,40,20,8,26,22,4,7,82,81,80,79,12,14,13,15]})";CHECK(portable_write_atomic("launcher.json",legacy,strlen(legacy)));CHECK(launcher_config_load("launcher.json",&b,error,sizeof(error))&&!b.vsync&&b.window_mode==0&&b.window_resolution==1&&b.internal_resolution==0&&b.aspect_ratio==0);}
+ CHECK(!a.vsync&&a.window_mode==0&&a.window_resolution==1&&a.internal_resolution==0&&a.aspect_ratio==0&&!a.unlock_all);a.vsync=true;a.window_mode=2;a.window_resolution=4;a.internal_resolution=3;a.aspect_ratio=1;a.unlock_all=true;
+ CHECK(launcher_config_save("launcher.json",&a,error,sizeof(error)));CHECK(launcher_config_load("launcher.json",&b,error,sizeof(error)));CHECK(!strcmp(a.image_path,b.image_path)&&!b.keyboard_enabled&&b.keyboard_port==3&&b.keys[0]==80&&b.vsync&&b.window_mode==2&&b.window_resolution==4&&b.internal_resolution==3&&b.aspect_ratio==1&&b.unlock_all);
+ {const char* legacy=R"({"image_path":"","keyboard_enabled":true,"keyboard_port":0,"ports":["keyboard","none","none","none"],"keys":[29,27,6,25,43,40,20,8,26,22,4,7,82,81,80,79,12,14,13,15]})";CHECK(portable_write_atomic("launcher.json",legacy,strlen(legacy)));CHECK(launcher_config_load("launcher.json",&b,error,sizeof(error))&&!b.vsync&&b.window_mode==0&&b.window_resolution==1&&b.internal_resolution==0&&b.aspect_ratio==0&&!b.unlock_all);}
 
  CHECK(portable_write_atomic("launcher.json","{bad",4));CHECK(!launcher_config_load("launcher.json",&b,error,sizeof(error)));CHECK(launcher_config_load("missing.json",&b,error,sizeof(error))&&b.keyboard_enabled);
  Bytes raw(65536);for(size_t i=0;i<raw.size();i++)raw[i]=Byte((i*71+i/17)%251);memcpy(raw.data(),"GDEE78",6);
@@ -60,7 +74,28 @@ int main(int argc,char** argv){
  CHECK(card_store_create(id,"../unsafe",8193)==-128);int slot=card_store_create(id,"DRA2SAVE",16384);CHECK(slot==0);CHECK(card_store_create(id,"DRA2SAVE",8192)==-7);CHECK(card_store_create(id,"oversized",16777216)==-9);
  CHECK(card_store_transfer(slot,raw.data(),8192,8192,true)==0);std::array<Byte,64> metadata{};CHECK(card_store_get(slot,metadata.data(),nullptr)==0);metadata[7]=2;metadata[0x2c]=0x12;CHECK(card_store_set(slot,metadata.data())==0);card_store_shutdown();
  card_store_init("saves");CHECK(card_store_mount()==0&&card_store_find(id,"DRA2SAVE")==0);Bytes saved(8192);CHECK(card_store_transfer(0,saved.data(),8192,8192,false)==0&&!memcmp(saved.data(),raw.data(),8192));CHECK(card_store_transfer(0,saved.data(),8192,16384,false)==-128);std::array<Byte,64> after{};CHECK(card_store_get(0,after.data(),nullptr)==0&&after==metadata);card_store_shutdown();
- FILE* f=portable_fopen("saves/MemoryCardA.card","r+b");CHECK(f);CHECK(_fseeki64(f,-1,SEEK_END)==0);fputc(0xee,f);fclose(f);card_store_init("saves");CHECK(card_store_mount()==-6);CHECK(card_store_format()==0);CHECK(card_store_free(&free_bytes,&free_files)==0&&free_files==127);card_store_shutdown();
+ // Forced unlock sessions must never persist autosave, metadata, deletion or
+ // format, and must still read their own writes until the next boot.
+ auto card_bytes=[](){FILE* in=portable_fopen("saves/MemoryCardA.card","rb");if(!in)abort();Bytes b;int c;while((c=fgetc(in))!=EOF)b.push_back(Byte(c));fclose(in);return b;};
+ Bytes original_card=card_bytes();
+ card_store_init("saves");card_store_set_volatile(true);CHECK(card_store_mount()==0);
+ Bytes forced(8192,1);CHECK(card_store_transfer(0,forced.data(),8192,8192,true)==0);
+ CHECK(card_store_transfer(0,saved.data(),8192,8192,false)==0&&saved==forced);
+ metadata[7]=1;CHECK(card_store_set(0,metadata.data())==0);
+ CHECK(card_store_delete(0)==0);CHECK(card_store_format()==0);card_store_shutdown();
+ CHECK(card_bytes()==original_card);
+ card_store_init("saves");CHECK(card_store_mount()==0&&card_store_find(id,"DRA2SAVE")==0);
+ CHECK(card_store_transfer(0,saved.data(),8192,8192,false)==0&&!memcmp(saved.data(),raw.data(),8192));card_store_shutdown();
+ card_store_init("volatile_empty");card_store_set_volatile(true);CHECK(card_store_mount()==0);
+ CHECK(card_store_create(id,"DRA2SAVE",8192)==0);card_store_shutdown();
+ CHECK(!fs::exists("volatile_empty/MemoryCardA.card"));fs::remove("volatile_empty/MemoryCardA.lock");fs::remove("volatile_empty");
+ FILE* f=portable_fopen("saves/MemoryCardA.card","r+b");CHECK(f);
+#ifdef _WIN32
+ CHECK(_fseeki64(f,-1,SEEK_END)==0);
+#else
+ CHECK(fseeko(f,-1,SEEK_END)==0);
+#endif
+ fputc(0xee,f);fclose(f);card_store_init("saves");CHECK(card_store_mount()==-6);CHECK(card_store_format()==0);CHECK(card_store_free(&free_bytes,&free_files)==0&&free_files==127);card_store_shutdown();
  for(const char* name:{"fixture.iso","fixture.ciso","fixture.rvz","launcher.json","saves/MemoryCardA.card","saves/MemoryCardA.lock"})fs::remove(name);fs::remove("saves");fs::current_path(dir.parent_path());fs::remove(dir);
  puts("Portable config, all RVZ codecs/packing, CISO boundaries and durable CARD reopen/corruption passed");return 0;
 }

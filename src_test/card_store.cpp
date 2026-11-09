@@ -1,6 +1,14 @@
 #include "card_store.h"
 #include "portable_config.h"
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#include <fcntl.h>
+#define INVALID_HANDLE_VALUE -1
+typedef int HANDLE;
+#define CloseHandle(h) close(h)
+#endif
 #include <array>
 #include <vector>
 #include <string>
@@ -12,21 +20,32 @@ static std::string card_path,lock_path;static HANDLE card_lock=INVALID_HANDLE_VA
 static uint32_t crc(const uint8_t* p,size_t n){uint32_t c=~0u;for(size_t i=0;i<n;i++){c^=p[i];for(int b=0;b<8;b++)c=(c>>1)^(0xedb88320u&uint32_t(-int(c&1)));}return ~c;}
 static void put(std::vector<uint8_t>& b,uint32_t v){for(int i=3;i>=0;i--)b.push_back(uint8_t(v>>(i*8)));}
 static uint32_t get(const uint8_t* p){return uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3];}
+static bool volatile_session=false;
+void card_store_set_volatile(bool enabled){if(!mounted)volatile_session=enabled;}
 static bool commit(){
+ if(volatile_session)return true;
  std::vector<uint8_t> b={'D','R','A','2','C','A','R','D'};put(b,1);put(b,0);
  for(const auto& e:entries){put(b,uint32_t(e.data.size()));b.insert(b.end(),e.dir.begin(),e.dir.end());b.insert(b.end(),e.data.begin(),e.data.end());}
  uint32_t c=crc(b.data()+16,b.size()-16);for(int i=0;i<4;i++)b[12+i]=uint8_t(c>>(24-i*8));
  return portable_write_atomic(card_path.c_str(),b.data(),b.size());
 }
 void card_store_init(const char* directory){card_store_shutdown();card_path=std::string(directory)+"/MemoryCardA.card";lock_path=std::string(directory)+"/MemoryCardA.lock";}
-void card_store_shutdown(void){mounted=false;for(auto& e:entries)e=Entry{};if(card_lock!=INVALID_HANDLE_VALUE){CloseHandle(card_lock);card_lock=INVALID_HANDLE_VALUE;}}
+void card_store_shutdown(void){mounted=false;volatile_session=false;for(auto& e:entries)e=Entry{};if(card_lock!=INVALID_HANDLE_VALUE){CloseHandle(card_lock);card_lock=INVALID_HANDLE_VALUE;}}
 int card_store_mount(){
  if(mounted)return 0;if(card_path.empty())return -5;
  auto at=card_path.find_last_of("/\\");if(!portable_mkdirs(card_path.substr(0,at).c_str()))return -5;
+#ifdef _WIN32
  if(card_lock==INVALID_HANDLE_VALUE){int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,lock_path.c_str(),-1,nullptr,0);if(!n)return -5;std::vector<wchar_t> p(n);MultiByteToWideChar(CP_UTF8,0,lock_path.c_str(),-1,p.data(),n);card_lock=CreateFileW(p.data(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(card_lock==INVALID_HANDLE_VALUE)return -1;}
+#else
+ if(card_lock==INVALID_HANDLE_VALUE){card_lock=open(lock_path.c_str(),O_RDWR|O_CREAT,0666);if(card_lock<0){card_lock=INVALID_HANDLE_VALUE;return -1;}}
+#endif
  for(auto& e:entries)e=Entry{};
  if(!portable_exists(card_path.c_str())){if(!commit())return -5;mounted=true;return 0;}
+#ifdef _WIN32
  FILE* f=portable_fopen(card_path.c_str(),"rb");if(!f)return -5;_fseeki64(f,0,SEEK_END);auto size=_ftelli64(f);rewind(f);if(size<16+CARD_FILE_COUNT*68||size>capacity+16+CARD_FILE_COUNT*68){fclose(f);return -6;}
+#else
+ FILE* f=portable_fopen(card_path.c_str(),"rb");if(!f)return -5;fseeko(f,0,SEEK_END);auto size=ftello(f);rewind(f);if(size<16+CARD_FILE_COUNT*68||size>capacity+16+CARD_FILE_COUNT*68){fclose(f);return -6;}
+#endif
  std::vector<uint8_t> b(size_t(size),0);bool ok=fread(b.data(),1,b.size(),f)==b.size();fclose(f);
  if(!ok)return -5;if(memcmp(b.data(),"DRA2CARD",8)||get(b.data()+8)!=1||get(b.data()+12)!=crc(b.data()+16,b.size()-16))return -6;
  size_t p=16;uint32_t total=0;std::array<Entry,CARD_FILE_COUNT> loaded;

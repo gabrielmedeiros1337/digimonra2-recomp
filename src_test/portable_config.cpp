@@ -1,6 +1,10 @@
 #include "portable_config.h"
 #include <SDL_scancode.h>
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#endif
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -11,11 +15,22 @@ namespace fs=std::filesystem;
 static fs::path path8(const char* s){return fs::path(std::u8string(reinterpret_cast<const char8_t*>(s)));}
 const char* const launcher_key_names[KEY_BIND_COUNT]={"A","B","X","Y","Z","Start","L","R","Stick Up","Stick Down","Stick Left","Stick Right","D-Pad Up","D-Pad Down","D-Pad Left","D-Pad Right","C-Stick Up","C-Stick Down","C-Stick Left","C-Stick Right"};
 void launcher_config_defaults(LauncherConfig* c){
-    memset(c,0,sizeof(*c));c->keyboard_enabled=true;c->window_resolution=1;c->internal_resolution=0;c->aspect_ratio=0;
+    memset(c,0,sizeof(*c));c->keyboard_enabled=true;c->window_resolution=1;c->internal_resolution=0;c->aspect_ratio=0;c->unlock_all=false;
+#ifdef _WIN32
+    LANGID lang = GetUserDefaultUILanguage();
+    if (PRIMARYLANGID(lang) == LANG_PORTUGUESE) {
+        strcpy_s(c->language, "pt-BR");
+    } else {
+        strcpy_s(c->language, "en");
+    }
+#else
+    strcpy_s(c->language, "pt-BR");
+#endif
     strcpy_s(c->ports[0],"keyboard");for(int i=1;i<4;i++)strcpy_s(c->ports[i],"none");
     const int keys[KEY_BIND_COUNT]={SDL_SCANCODE_Z,SDL_SCANCODE_X,SDL_SCANCODE_C,SDL_SCANCODE_V,SDL_SCANCODE_TAB,SDL_SCANCODE_RETURN,SDL_SCANCODE_Q,SDL_SCANCODE_E,SDL_SCANCODE_W,SDL_SCANCODE_S,SDL_SCANCODE_A,SDL_SCANCODE_D,SDL_SCANCODE_UP,SDL_SCANCODE_DOWN,SDL_SCANCODE_LEFT,SDL_SCANCODE_RIGHT,SDL_SCANCODE_I,SDL_SCANCODE_K,SDL_SCANCODE_J,SDL_SCANCODE_L};
     memcpy(c->keys,keys,sizeof(keys));
 }
+#ifdef _WIN32
 FILE* portable_fopen(const char* p,const char* mode){try{std::wstring m;while(*mode)m+=wchar_t(*mode++);return _wfopen(path8(p).c_str(),m.c_str());}catch(...){return nullptr;}}
 bool portable_mkdirs(const char* p){try{std::error_code e;fs::create_directories(path8(p),e);return !e && fs::is_directory(path8(p));}catch(...){return false;}}
 bool portable_exists(const char* p){try{return fs::is_regular_file(path8(p));}catch(...){return false;}}
@@ -33,6 +48,35 @@ bool portable_write_atomic(const char* p,const void* data,size_t size){
         if(!ok)DeleteFileW(temp.c_str());return ok;
     }catch(...){return false;}
 }
+#else
+FILE* portable_fopen(const char* p,const char* mode){return fopen(p,mode);}
+bool portable_mkdirs(const char* p){try{std::error_code e;fs::create_directories(p,e);return !e && fs::is_directory(p);}catch(...){return false;}}
+bool portable_exists(const char* p){try{return fs::is_regular_file(p);}catch(...){return false;}}
+bool portable_executable_root(char* out,size_t cap){
+    char buf[4096];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf)-1);
+    if(len <= 0) return false;
+    buf[len] = '\0';
+    auto s = fs::path(buf).parent_path().string();
+    if(s.size()+1 > cap) return false;
+    memcpy(out, s.c_str(), s.size()+1);
+    return true;
+}
+bool portable_write_atomic(const char* p,const void* data,size_t size){
+    try{
+        fs::path dest=p, temp=dest;temp+=".tmp";
+        std::error_code ec;if(!dest.parent_path().empty()){fs::create_directories(dest.parent_path(),ec);if(ec)return false;}
+        FILE* f = fopen(temp.c_str(), "wb");
+        if(!f) return false;
+        bool ok = fwrite(data, 1, size, f) == size;
+        if(ok) ok = (fflush(f) == 0);
+        fclose(f);
+        if(ok) ok = (rename(temp.c_str(), dest.c_str()) == 0);
+        if(!ok) unlink(temp.c_str());
+        return ok;
+    }catch(...){return false;}
+}
+#endif
 static bool fail(char* e,size_t cap,const char* message){if(e&&cap)snprintf(e,cap,"%s",message);return false;}
 bool launcher_config_load(const char* p,LauncherConfig* c,char* error,size_t cap){
     launcher_config_defaults(c);if(error&&cap)*error=0;
@@ -46,6 +90,8 @@ bool launcher_config_load(const char* p,LauncherConfig* c,char* error,size_t cap
     if(o.count("window_resolution")){auto& r=o["window_resolution"];if(!r.is<double>()||r.get<double>()<0||r.get<double>()>6||floor(r.get<double>())!=r.get<double>())return fail(error,cap,"Invalid window resolution.");v.window_resolution=int(r.get<double>());}
     if(o.count("internal_resolution")){auto& r=o["internal_resolution"];if(!r.is<double>()||r.get<double>()<0||r.get<double>()>4||floor(r.get<double>())!=r.get<double>())return fail(error,cap,"Invalid internal resolution.");v.internal_resolution=int(r.get<double>());}
     if(o.count("aspect_ratio")){auto& a=o["aspect_ratio"];if(!a.is<double>()||a.get<double>()<0||a.get<double>()>1||floor(a.get<double>())!=a.get<double>())return fail(error,cap,"Invalid aspect ratio.");v.aspect_ratio=int(a.get<double>());}
+    if(o.count("unlock_all")){if(!o["unlock_all"].is<bool>())return fail(error,cap,"Invalid unlock_all setting.");v.unlock_all=o["unlock_all"].get<bool>();}
+    if(o.count("language")&&o["language"].is<std::string>()){auto lang=o["language"].get<std::string>();if(lang.size()<sizeof(v.language))strcpy_s(v.language,lang.c_str());}
     auto get=[&](const char* key)->const picojson::value&{static picojson::value nil;auto it=o.find(key);return it==o.end()?nil:it->second;};
     if(!get("image_path").is<std::string>()||get("image_path").get<std::string>().size()>=sizeof(v.image_path))return fail(error,cap,"Invalid image_path.");
     strcpy_s(v.image_path,get("image_path").get<std::string>().c_str());
@@ -64,6 +110,8 @@ bool launcher_config_save(const char* p,const LauncherConfig* c,char* e,size_t c
     o["window_resolution"]=picojson::value(double(c->window_resolution));
     o["internal_resolution"]=picojson::value(double(c->internal_resolution));
     o["aspect_ratio"]=picojson::value(double(c->aspect_ratio));
+    o["unlock_all"]=picojson::value(c->unlock_all);
+    o["language"]=picojson::value(std::string(c->language[0]?c->language:"pt-BR"));
     picojson::array ports,keys;for(auto& s:c->ports)ports.emplace_back(std::string(s));for(int k:c->keys)keys.emplace_back(double(k));o["ports"]=picojson::value(ports);o["keys"]=picojson::value(keys);
     std::string text=picojson::value(o).serialize(true);if(!portable_write_atomic(p,text.data(),text.size()))return fail(e,cap,"Cannot save configuration (check folder permissions).");return true;
 }

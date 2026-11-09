@@ -15,6 +15,15 @@
 #define CHUNK_SWAP16 __builtin_bswap16
 #define CHUNK_SWAP32 __builtin_bswap32
 #define CHUNK_SWAP64 __builtin_bswap64
+#ifndef _byteswap_ushort
+#define _byteswap_ushort __builtin_bswap16
+#endif
+#ifndef _byteswap_ulong
+#define _byteswap_ulong __builtin_bswap32
+#endif
+#ifndef _byteswap_uint64
+#define _byteswap_uint64 __builtin_bswap64
+#endif
 #endif
 #define CHUNK_SWAP8(x) (x)
 /* RAM and CPUState allocations are disjoint. Restrict on the RAM base is

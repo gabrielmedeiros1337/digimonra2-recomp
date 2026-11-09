@@ -9,6 +9,8 @@ extern "C" {
 #define CARD_FILE_COUNT 127
 void card_store_init(const char* directory);
 void card_store_shutdown(void);
+/* Enable before mounting. Successful writes remain in memory until shutdown. */
+void card_store_set_volatile(bool enabled);
 int card_store_mount(void);
 int card_store_format(void);
 int card_store_free(int* bytes,int* files);

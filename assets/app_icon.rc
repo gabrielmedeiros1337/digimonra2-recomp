@@ -1,0 +1,5 @@
+#ifndef IDI_ICON1
+#define IDI_ICON1 1
+#endif
+
+IDI_ICON1 ICON "app_icon.ico"

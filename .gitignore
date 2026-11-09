@@ -1,24 +1,37 @@
-# Build directories and artifacts
-build/
-build_test/
+# Build directories and outputs
+build*/
 /*.exe
 *.obj
 *.pdb
 *.ilk
 *.idb
 
-# Game dumps, ROMs and extracted disc assets (copyright / >100MB file limit)
+# Game dumps, ROMs and disc images (never distribute)
 *.ciso
 *.iso
 *.gcm
+*.rvz
 *.dol
+*.nkit.iso
 extracted/
 
-# Debug frame captures and test logs
-*.bmp
-*.log
-run_*.txt
-test_*.txt
+# Saves and user data
+saves/*.raw
+saves/*.card*
+/saves/
+/config/
+
+# Compressed packages and archives
+*.zip
+*.7z
+*.rar
+*.tar.gz
+
+# Local developer notes and agent files
+/.local_notes/
+.claude/
+CLAUDE.md
+*.prompt.txt
 
 # Visual Studio & IDE files
 .vs/
@@ -27,28 +40,23 @@ x64/
 Release/
 Debug/
 
-# Compressed archives
-*.zip
-*.7z
-*.rar
+# Debug logs and frame captures
+*.bmp
+*.log
+run_*.txt
+test_*.txt
 
-# Generated Python/tool/inventory artifacts (sources remain versioned)
+# Python cache
 __pycache__/
 *.py[cod]
 /tools/sample_stacks.exe
 /symbol_inventory_report.txt
 
-# Portable release output and user-owned portable data
+# Portable release directories
 /DigimonRA2_PC/
+/DigimonRA2_PC_Linux/
+/DigimonRA2_Linux_x64/
 /distribution/release_package/
-/config/
-/saves/
-*.rvz
 
-# Local developer notes and prompts
-/.local_notes/
-CLAUDE.md
-*.prompt.txt
-
-# Historical local checkout; production dependencies are versioned in third_party/recomp-deps.
+# Third-party temporary checkouts
 /ModernGekko-Template/
