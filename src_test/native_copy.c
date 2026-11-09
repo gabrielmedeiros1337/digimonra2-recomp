@@ -1,6 +1,9 @@
 #include "native_copy.h"
 #include "cpu/ps_fast.h"
 #include <string.h>
+#if defined(_M_X64) || defined(__x86_64__)
+#include <emmintrin.h>
+#endif
 extern bool g_native_blocks_enabled;
 static u64 copied;
 u64 native_copy_bytes(void){return copied;}

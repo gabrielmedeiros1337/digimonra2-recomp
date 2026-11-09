@@ -33,9 +33,9 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build digimon_test
+      - name: Build project and tests
         run: |
-          cmake --build build --target digimon_test --config Release
+          cmake --build build --config Release
 
       - name: Run contract tests
         run: |

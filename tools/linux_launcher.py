@@ -637,6 +637,26 @@ class LinuxLauncher(tk.Tk):
             elif os.path.exists("build_test/usability/Release/digimon_test.exe"):
                 binary = "build_test/usability/Release/digimon_test.exe"
 
+        if os.path.exists(binary):
+            try:
+                os.chmod(binary, 0o755)
+            except Exception:
+                pass
+            try:
+                with open(binary, "rb") as bf:
+                    if bf.read(2) == b"MZ" and sys.platform != "win32":
+                        msg = (
+                            "O arquivo ./digimon_test é um executável de Windows (.exe) e não um binário nativo de Linux ELF (x86_64).\n\n"
+                            "Baixe o pacote oficial de Linux compilado pelo GitHub Actions na aba Releases do projeto."
+                            if self.cur_lang == "pt-BR" else
+                            "The file ./digimon_test is a Windows executable (.exe), not a native Linux ELF binary.\n\n"
+                            "Please download the official native Linux package built via GitHub Actions from the project Releases."
+                        )
+                        messagebox.showerror("Error", msg)
+                        return
+            except Exception:
+                pass
+
         cmd = [binary, "--portable"]
         if disc:
             cmd += ["--disc", disc]
