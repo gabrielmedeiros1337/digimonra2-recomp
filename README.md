@@ -111,6 +111,14 @@ python3 tools/package_linux.py --source . --binary-dir build --output DigimonRA2
 
 ---
 
+### 📄 Licença
+
+Este projeto é distribuído sob os termos da licença **GNU General Public License v3.0 (GPLv3)**. Consulte o arquivo [`LICENSE`](LICENSE) para o texto completo da licença.
+
+Forks, melhorias e modificações são totalmente permitidos e encorajados sob os termos da GPLv3, desde que a autoria e os créditos originais a **Gabriel Medeiros** ([gabrielmedeiros1337](https://github.com/gabrielmedeiros1337)) sejam expressa e integralmente mantidos em qualquer redistribuição, pacote ou obra derivada.
+
+---
+
 ## 🇺🇸 English (EN)
 
 ### 🎮 Key Features
@@ -213,3 +221,11 @@ python3 tools/package_linux.py --source . --binary-dir build --output DigimonRA2
 * **No copyrighted assets, ROM images, ISOs, audio tracks, or proprietary game code are distributed within this repository or release packages.** Users must provide their own legally acquired GameCube game dump.
 * *Digimon Rumble Arena 2* © Bandai / Bandai Namco Entertainment Inc. All rights reserved.
 * Port development and static recompilation engineering by **Gabriel Medeiros** ([gabrielmedeiros1337](https://github.com/gabrielmedeiros1337)).
+
+---
+
+### 📄 License
+
+This project is licensed under the terms of the **GNU General Public License v3.0 (GPLv3)**. See the [`LICENSE`](LICENSE) file for the full license text.
+
+Forks, enhancements, and modifications are welcomed and permitted under the GPLv3, provided that original authorship and credits to **Gabriel Medeiros** ([gabrielmedeiros1337](https://github.com/gabrielmedeiros1337)) are fully and visibly preserved in any redistribution, package, or derivative work.
