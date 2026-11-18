@@ -1,11 +1,13 @@
 DIGIMON RUMBLE ARENA 2 — PC PORT
 
-Abra DigimonRA2.exe. Clique em Procurar, selecione seu dump original USA,
-configure as quatro portas e clique em JOGAR. Não há ROM, DOL ou assets do
+No Windows, abra DigimonRA2.exe. No Linux, execute ./DigimonRA2.
+Clique em Procurar, selecione seu dump original USA, configure as portas
+e clique em JOGAR. Não há ROM, DOL ou assets do
 jogo neste pacote. O DOL é carregado diretamente da sua imagem de disco.
 
 REQUISITOS
-Windows 10/11 x64, OpenGL e o Microsoft Visual C++ Redistributable x64 atual.
+Windows 10/11 x64 com OpenGL e Microsoft Visual C++ Redistributable x64.
+Ubuntu 22.04 x86_64 com OpenGL, SDL2, libssl3 e Python 3 com Tkinter.
 SDL2.dll deve ficar ao lado dos executáveis. Use uma pasta com permissão de
 escrita; configurações e saves ficam junto do jogo, nunca no AppData.
 
@@ -20,6 +22,7 @@ O launcher valida os bytes, não apenas a extensão do arquivo.
 CONTROLES
 Cada dispositivo físico ocupa uma porta, livremente escolhida de 1 a 4.
 As três opções fixas são Desconectado, Teclado e Controle (automático).
+O P1 começa em Controle (automático).
 Controle automático usa o próximo dispositivo disponível, sem duplicá-lo
 em outra porta. Os controles detectados também aparecem pelo nome, para
 atribuição específica. Se conectar depois de abrir, clique em Atualizar.
@@ -63,7 +66,7 @@ ABAS DO LAUNCHER
 Jogar: dump original, botão JOGAR e acesso aos saves.
 Controles: portas 1–4, dispositivos e mapeamento de teclado.
 Opções: Resolução da janela (640x480 até 4K UHD), Resolução interna 3D / EFB Scale
-(1x Nativa até 4x Quad HD na GPU), Proporção de Tela / Aspect Ratio (4:3 padrão ou 16:9
+(1x nativa a 6x, com buffer de 3840x3168 em 6x), Proporção de Tela (4:3 padrão ou 16:9
 Widescreen real via Hor+), VSync opcional e Modo de tela.
 FreeSync/VRR permanece sob controle do monitor/driver; o jogo continua a 60 FPS.
 Créditos: informações técnicas do projeto, autoria de Gabriel Medeiros e repositório oficial.

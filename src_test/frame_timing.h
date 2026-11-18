@@ -21,6 +21,11 @@ bool frame_timing_worker(bool enabled);
 FrameStage frame_timing_enter(FrameStage stage);
 void frame_timing_leave(FrameStage previous);
 bool frame_timing_end(FrameTimingReport* report);
+typedef struct {
+    uint64_t stage_ticks[FRAME_STAGE_COUNT];
+    uint64_t wall_ticks;
+} FrameTimingSample;
+bool frame_timing_end_sample(FrameTimingReport* report, FrameTimingSample* sample);
 uint64_t frame_pacer_target(uint64_t previous,uint64_t now,uint64_t hz);
 int frame_timing_contracts(void);
 #endif

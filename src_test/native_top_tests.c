@@ -63,9 +63,22 @@ static int vec_contracts(void){
         for(u32 i=0;i<16;i++){float v=((int)((sample*17+i*11)%157)-78)/16.f;u32 bits;memcpy(&bits,&v,4);primary_write32(&seed,seed.gpr[3]+i*4,bits);}
         for(u32 i=0;i<3;i++){float v=((int)((sample*7+i*31)%91)-45)/8.f;u32 bits;memcpy(&bits,&v,4);primary_write32(&seed,seed.gpr[4]+i*4,bits);}
         memcpy(b,a,sizeof(a));CPUState expected=seed,actual=seed;expected.ram=b;if(variant)ref_vec_1(&expected);else ref_vec_0(&expected);
-        if(route)actual.downcount-=31;CHECK(sdk_vec_transform(&actual,route!=0));expected.ram=a;
+        if(route)actual.downcount-=31;
+#if !defined(_MSC_VER) || !defined(_M_X64)
+        // The native SIMD path is compiled out; the guest code handles it.
+        CPUState before;
+        memcpy(&before,&actual,sizeof(actual));
+        CHECK(!sdk_vec_transform(&actual,route!=0));
+        CHECK(!memcmp(&actual,&before,sizeof(actual)));
+        cases++;
+        continue;
+#endif
+        CHECK(sdk_vec_transform(&actual,route!=0));expected.ram=a;
         CHECK(!memcmp(&actual,&expected,sizeof(actual)) && !memcmp(a,b,sizeof(a)));cases++;
     }
+#if !defined(_MSC_VER) || !defined(_M_X64)
+    printf("[Vector fallback] %u native declines preserved guest CPU state\n",cases);return 0;
+#endif
     printf("[Vector HLE] %u full CPU/RAM comparisons: two entries, overlaps, FPR/PS1 and budgets passed\n",cases);return 0;
 }
 int main(void){return floor_contracts() || copy_contracts() || vec_contracts();}

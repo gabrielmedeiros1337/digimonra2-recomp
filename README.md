@@ -28,7 +28,7 @@ Desenvolvido individualmente por **Gabriel Medeiros** ([gabrielmedeiros1337](htt
 
 | Componente | Requisitos Mínimos (60 FPS / Nativo & 720p) | Requisitos Recomendados (60 FPS / 1080p até 4K) |
 | :--- | :--- | :--- |
-| **Sistema Operacional** | Windows 10/11 (64-bit) ou Linux x86_64 (Ubuntu 20.04+, SteamOS) | Windows 10/11 (64-bit) ou Linux / SteamOS (Steam Deck) |
+| **Sistema Operacional** | Windows 10/11 (64-bit) ou Linux x86_64 (Ubuntu 22.04+, SteamOS) | Windows 10/11 (64-bit) ou Linux / SteamOS (Steam Deck) |
 | **Processador (CPU)** | Intel Core 2 Duo / Core i3 de 2ª geração ou AMD Athlon / FX equivalente | Intel Core i3 / i5 de 6ª geração, AMD Ryzen 3 ou superior |
 | **Memória RAM** | 2 GB de RAM | 4 GB de RAM |
 | **Placa de Vídeo (GPU)** | Gráficos integrados com suporte a OpenGL 3.3 (Intel HD Graphics 4000, Radeon HD 5000, GeForce 8800 GT) | Placa dedicada (GeForce GTX 750 / 1050, Radeon RX 550) ou iGPU moderna (Intel Iris Xe / AMD Vega) |
@@ -40,13 +40,13 @@ Desenvolvido individualmente por **Gabriel Medeiros** ([gabrielmedeiros1337](htt
 ### 📥 Como Jogar (Instalação pelo Release)
 
 1. Baixe o pacote correspondente ao seu sistema operacional na aba **[Releases](../../releases/latest)**:
-   * **Windows:** `DigimonRA2_PC.zip`
-   * **Linux:** `DigimonRA2_PC_Linux_x64.tar.gz`
+   * **Windows:** `DigimonRA2_PC_Windows_x64.zip`
+   * **Linux:** `DigimonRA2_PC_Linux_x64.zip`
 2. Extraia o pacote para uma pasta com permissões de gravação normais.
 3. No Windows, verifique se possui o [Microsoft Visual C++ Redistributable x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) instalado.
 4. Execute o inicializador do jogo:
    * **Windows:** dê dois cliques em `DigimonRA2.exe`.
-   * **Linux:** execute `./DigimonRA2` ou `python3 tools/linux_launcher.py`.
+   * **Linux:** instale `libsdl2-2.0-0`, `libgl1`, `libssl3` e `python3-tk` no Ubuntu 22.04, depois execute `./DigimonRA2`.
 5. Na aba **Jogar**, clique em **Procurar...** e selecione o seu dump original americano (GameCube USA - ID `GD6E01` / `GD6EB2`). Formatos aceitos: `.iso`, `.ciso`, `.rvz`, `.gcm`, `.nkit.iso`.
 6. Configure seus controles e preferências gráficas nas abas **Controles** e **Opções**.
 7. Clique no botão **JOGAR**!
@@ -141,7 +141,7 @@ Forks, melhorias e modificações são totalmente permitidos e encorajados sob o
 
 | Component | Minimum Requirements (60 FPS / Native & 720p) | Recommended Requirements (60 FPS / 1080p up to 4K) |
 | :--- | :--- | :--- |
-| **Operating System** | Windows 10/11 (64-bit) or Linux x86_64 (Ubuntu 20.04+, SteamOS) | Windows 10/11 (64-bit) or Linux / SteamOS (Steam Deck) |
+| **Operating System** | Windows 10/11 (64-bit) or Linux x86_64 (Ubuntu 22.04+, SteamOS) | Windows 10/11 (64-bit) or Linux / SteamOS (Steam Deck) |
 | **Processor (CPU)** | Intel Core 2 Duo / 2nd Gen Core i3 or AMD Athlon / FX equivalent | Intel 6th Gen Core i3 / i5, AMD Ryzen 3 or higher |
 | **Memory (RAM)** | 2 GB RAM | 4 GB RAM |
 | **Graphics (GPU)** | Integrated graphics with OpenGL 3.3 support (Intel HD Graphics 4000, Radeon HD 5000, GeForce 8800 GT) | Dedicated GPU (GeForce GTX 750 / 1050, Radeon RX 550) or modern iGPU (Intel Iris Xe / AMD Vega) |
@@ -153,13 +153,13 @@ Forks, melhorias e modificações são totalmente permitidos e encorajados sob o
 ### 📥 How to Play (Release Installation)
 
 1. Download the package for your operating system from the **[Releases](../../releases/latest)** section:
-   * **Windows:** `DigimonRA2_PC.zip`
-   * **Linux:** `DigimonRA2_PC_Linux_x64.tar.gz`
+   * **Windows:** `DigimonRA2_PC_Windows_x64.zip`
+   * **Linux:** `DigimonRA2_PC_Linux_x64.zip`
 2. Extract the archive into a folder with standard read/write permissions.
 3. On Windows, make sure you have the [Microsoft Visual C++ Redistributable x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) installed.
 4. Launch the application:
    * **Windows:** Double-click `DigimonRA2.exe`.
-   * **Linux:** Run `./DigimonRA2` or `python3 tools/linux_launcher.py`.
+   * **Linux:** install `libsdl2-2.0-0`, `libgl1`, `libssl3`, and `python3-tk` on Ubuntu 22.04, then run `./DigimonRA2`.
 5. On the **Play** tab, click **Browse...** and select your legally obtained GameCube USA dump (ID `GD6E01` / `GD6EB2`). Supported formats: `.iso`, `.ciso`, `.rvz`, `.gcm`, `.nkit.iso`.
 6. Configure controller bindings and visual preferences under the **Controls** and **Options** tabs.
 7. Click **PLAY**!

@@ -18,7 +18,9 @@ typedef struct {
     u8 color[4],tex_matrix[8];u32 matrix;
 } GXGLRawVertex;
 typedef struct {u32 words[0x1058];bool projection,lighting;} GXGLTransform;
-typedef struct {u64 draws,stream_bytes,orphans,shader_compiles,uniform_lookups,vram_copies,geometry_hits,geometry_uploads,xf_uniform_blocks,geometry_hashes,dynamic_streams,hash_ticks,lookup_ticks,repack_ticks;} GXGLStats;
+typedef struct {u64 draws,stream_bytes,orphans,shader_compiles,uniform_lookups,vram_copies,geometry_hits,geometry_uploads,xf_uniform_blocks,geometry_hashes,dynamic_streams,hash_ticks,lookup_ticks,repack_ticks;
+    u64 draw_prepare_ticks,draw_submit_ticks,gpu_elapsed_ns,gpu_samples,gpu_skipped;
+} GXGLStats;
 void gx_gl_set_geometry_cache(bool enabled);
 bool gx_gl_geometry_cache(void);
 void gx_gl_set_internal_scale(float scale);
@@ -26,6 +28,10 @@ float gx_gl_get_internal_scale(void);
 void gx_gl_set_aspect_ratio(int ratio);
 int gx_gl_get_aspect_ratio(void);
 void gx_gl_get_stats(GXGLStats* stats);
+void gx_gl_set_draw_trace(bool enabled);
+bool gx_gl_start_gpu_trace(void);
+bool gx_gl_begin_gpu_packet(void);
+void gx_gl_end_gpu_packet(void);
 bool gx_gl_copy_color(SDL_Renderer* renderer,SDL_Texture* destination,const SDL_Rect* source);
 bool gx_gl_copy_texture(SDL_Renderer* renderer,SDL_Texture* destination,const SDL_Rect* source,u32 format,u32 step,bool luma);
 

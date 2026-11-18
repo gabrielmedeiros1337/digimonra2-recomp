@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import tarfile
+import zipfile
 
 
 def package_linux(source: Path, binary: Path, output: Path, make_tar: bool = True) -> dict:
@@ -17,10 +17,11 @@ def package_linux(source: Path, binary: Path, output: Path, make_tar: bool = Tru
     vendor = source / "third_party/recomp-deps/dolphin"
     external = vendor / "Externals"
 
-    # Find digimon_test binary (could be named digimon_test or digimon_test.exe on cross/wine)
     game_binary = binary / "digimon_test"
-    if not game_binary.is_file() and (binary / "digimon_test.exe").is_file():
-        game_binary = binary / "digimon_test.exe"
+    with game_binary.open("rb") as stream:
+        header = stream.read(20)
+    if len(header) != 20 or header[:6] != b"\x7fELF\x02\x01" or header[18:20] != b"\x3e\x00":
+        raise ValueError("Linux release requires a native x86-64 ELF binary")
 
     dsp_coef = binary / "dsp_coef.bin"
     if not dsp_coef.is_file():
@@ -32,6 +33,7 @@ def package_linux(source: Path, binary: Path, output: Path, make_tar: bool = Tru
         "tools/linux_launcher.py": source / "tools/linux_launcher.py",
         "dsp_coef.bin": dsp_coef,
         "README.pt-BR.txt": source / "distribution/README.pt-BR.txt",
+        "LICENSE": source / "LICENSE",
         "config/launcher_config.json": source / "distribution/config/launcher_config.json",
         "config/runtime_tuning.cfg": source / "distribution/config/runtime_tuning.cfg",
         "config/dispatch_chain.cfg": source / "distribution/config/dispatch_chain.cfg",
@@ -48,9 +50,8 @@ def package_linux(source: Path, binary: Path, output: Path, make_tar: bool = Tru
         if not path.is_file():
             raise FileNotFoundError(f"Missing required artifact: {name}: {path}")
 
-    if output.exists():
-        if not (output / "build_manifest.json").is_file():
-            shutil.rmtree(output)
+    if output.exists() and not (output / "build_manifest.json").is_file():
+        raise ValueError("Refusing to replace an unknown directory")
 
     output.mkdir(parents=True, exist_ok=True)
     hashes = {}
@@ -82,7 +83,7 @@ Freely generated DSP coefficients: pinned Dolphin Data/Sys/GC/dsp_coef.bin.
 See LICENSES/ for the complete bundled license texts.
 Project source: https://github.com/gabrielmedeiros1337/digimonra2-recomp
 No disc dump, DOL, extracted game assets, music or user save is included.
-System prerequisites on Linux: libsdl2-2.0-0, libgl1-mesa-glx, libssl, python3-tk.
+Ubuntu 22.04 prerequisites: libsdl2-2.0-0, libgl1, libssl3, python3-tk.
 """
     (output / "THIRD_PARTY_NOTICES.txt").write_text(notices, encoding="utf-8")
 
@@ -103,17 +104,36 @@ System prerequisites on Linux: libsdl2-2.0-0, libgl1-mesa-glx, libssl, python3-t
     }
     (output / "build_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
+    # Archive only the files supplied by this build. Use distribution config
+    # defaults even when repackaging an installation with local settings.
+    archive_files = {name: files[name] if name.startswith("config/") else output / name
+                     for name in files}
+    for name in ("saves/.keep", "games/.keep", "build_manifest.json", "THIRD_PARTY_NOTICES.txt"):
+        archive_files[name] = output / name
+    archive_manifest = dict(manifest, files_sha256={
+        name: hashlib.sha256(archive_files[name].read_bytes()).hexdigest() for name in files
+    })
+    manifest_bytes = (json.dumps(archive_manifest, indent=2) + "\n").encode()
+    manifest_name = "DigimonRA2_PC_Linux/build_manifest.json"
+    zip_path = output.parent / "DigimonRA2_PC_Linux_x64.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        for name, path in sorted(archive_files.items()):
+            if name != "build_manifest.json":
+                archive.write(path, "DigimonRA2_PC_Linux/" + name)
+        archive.writestr(manifest_name, manifest_bytes)
+    print(f"ZIP created: {zip_path} ({zip_path.stat().st_size} bytes)")
     if make_tar:
+        from io import BytesIO
         tar_path = output.parent / "DigimonRA2_PC_Linux_x64.tar.gz"
-        print(f"Creating tarball: {tar_path}")
-        with tarfile.open(tar_path, "w:gz") as tar:
-            for item in sorted(output.rglob("*")):
-                arcname = str(Path("DigimonRA2_PC_Linux") / item.relative_to(output))
-                tarinfo = tar.gettarinfo(str(item), arcname=arcname)
-                if item.name in ("digimon_test", "DigimonRA2"):
-                    tarinfo.mode = 0o755
-                tar.addfile(tarinfo, open(item, "rb") if item.is_file() else None)
-        print(f"Tarball created: {tar_path} ({os.path.getsize(tar_path)} bytes)")
+        with tarfile.open(tar_path, "w:gz") as archive:
+            for name, path in sorted(archive_files.items()):
+                if name != "build_manifest.json":
+                    archive.add(path, arcname="DigimonRA2_PC_Linux/" + name, recursive=False)
+            info = tarfile.TarInfo(manifest_name)
+            info.size = len(manifest_bytes)
+            info.mode = 0o644
+            archive.addfile(info, BytesIO(manifest_bytes))
+        print(f"Tarball created: {tar_path} ({tar_path.stat().st_size} bytes)")
 
     return manifest
 

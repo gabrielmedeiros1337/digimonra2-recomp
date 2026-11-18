@@ -1,7 +1,7 @@
 #ifndef GX_FRAME_H
 #define GX_FRAME_H
 #include "gx_gl.h"
-enum {GX_FRAME_ARENAS=3};
+enum {GX_FRAME_ARENAS=4};
 typedef struct {
     GXGLStats gl;
     u64 render,copy,texture_copy,uploads,texture_hits,hash_bytes,readbacks;

@@ -53,7 +53,7 @@ int main(void){
     }
     double sum=0;for(u32 i=0;i<FRAME_STAGE_COUNT;i++)sum+=report.ms[i];CHECK(sum-report.wall_ms<0.001 && report.wall_ms-sum<0.001);
     CHECK(report.ms[FRAME_GL_SUBMIT]==0); // Backend wall time must not be added to simultaneous CPU time.
-    // All three arenas can be published before the owner consumes anything.
+    // All arenas can be published before the owner consumes anything.
     GXFrameStats initial;gx_frame_stats(&initial);
     for(u32 i=0;i<GX_FRAME_ARENAS;i++){Packet* p=gx_frame_alloc(32);CHECK(p);p->bytes=8;p->sequence=expected++;CHECK(gx_frame_trim(16));CHECK(gx_frame_submit(false));}
     GXFrameStats queued;gx_frame_stats(&queued);CHECK(queued.packets==initial.packets);CHECK(gx_frame_drain());

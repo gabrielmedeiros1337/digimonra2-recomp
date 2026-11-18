@@ -138,7 +138,8 @@ INTERNAL_RES_OPTIONS = [
     "1.5x (960x792) - Smooth 720p",
     "2x (1280x1056) - HD 1080p",
     "3x (1920x1584) - 2K Quad HD",
-    "4x (2560x2112) - Ultra HD 4K"
+    "4x (2560x2112)",
+    "6x (3840x3168) - 4K"
 ]
 
 WINDOW_RES_OPTIONS = [
@@ -162,9 +163,9 @@ def load_config():
         "unlock_all": False,
         "language": "pt-BR",
         "image_path": "",
-        "keyboard_enabled": True,
+        "keyboard_enabled": False,
         "keyboard_port": 0,
-        "ports": ["keyboard", "none", "none", "none"],
+        "ports": ["auto", "none", "none", "none"],
         "keys": DEFAULT_KEYS
     }
     if os.path.exists(CONFIG_PATH):
@@ -461,7 +462,7 @@ class LinuxLauncher(tk.Tk):
         self.lbl_ctrl_box.pack(anchor="w", padx=14, pady=(10, 8))
 
         self.cbo_ports = []
-        ports = self.config_data.get("ports", ["keyboard", "none", "none", "none"])
+        ports = self.config_data.get("ports", ["auto", "none", "none", "none"])
         device_labels = ["ctrl_p1", "ctrl_p2", "ctrl_p3", "ctrl_p4"]
 
         for idx, plabel in enumerate(device_labels):

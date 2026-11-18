@@ -30,6 +30,15 @@ int main(void){
         memcpy(b,a,size);CPUState expected=seed,actual=seed;expected.ram=b;
         g_bounds_oracle_stop=false;if(upper)ref_bounds_max(&expected);else ref_bounds_min(&expected);
         if(route){g_bounds_oracle_stop=true;if(upper)ref_bounds_max(&actual);else ref_bounds_min(&actual);g_bounds_oracle_stop=false;}
+#if !defined(_MSC_VER) || !defined(_M_X64)
+        // The native planes path is compiled out; the guest code handles it.
+        CPUState before;
+        memcpy(&before,&actual,sizeof(actual));
+        CHECK(!sdk_bounds_test(&actual));
+        CHECK(!memcmp(&actual,&before,sizeof(actual)));
+        cases++;
+        continue;
+#endif
         CHECK(sdk_bounds_test(&actual));expected.ram=a;
         if(memcmp(&actual,&expected,sizeof(actual)) || memcmp(a,b,size)){
             fprintf(stderr,"sample=%u count=%d upper=%u route=%u charge=%lld/%lld cr=%08X/%08X fpscr=%08X/%08X\n",sample,count,upper,route,actual.downcount,expected.downcount,actual.cr,expected.cr,actual.fpscr,expected.fpscr);
@@ -38,6 +47,9 @@ int main(void){
         }cases++;
     }
     free(a);free(b);g_fast_float_enabled=false;
+#if !defined(_MSC_VER) || !defined(_M_X64)
+    printf("[Bounds fallback] %u native declines preserved guest CPU state\n",cases);return 0;
+#endif
     printf("[Bounds HLE] %u full CPU/RAM comparisons; two plane/AABB functions, entry + original prologue continuation, all exits passed\n",cases);return 0;
 }
 

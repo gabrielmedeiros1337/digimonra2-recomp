@@ -202,8 +202,8 @@ static bool frame_queue_copy(CPUState* cpu,u32 control,bool display){
 static bool frame_queue_clear(const SDL_Rect* region,u32 ar,u32 gb,u32 z){
     FrameClear* op=gx_frame_alloc(sizeof(*op));if(!op)return false;*op=(FrameClear){{FRAME_CLEAR,frame_align(sizeof(*op))},*region,ar,gb,z};return true;
 }
-static bool frame_execute(const u8* data,u32 bytes,void* ignored){
-    (void)ignored;CPUState cpu=frame_backend.cpu;cpu.ram=frame_backend.shadow;s_backend_palette=frame_backend.palette;
+static bool frame_execute_commands(const u8* data,u32 bytes){
+    CPUState cpu=frame_backend.cpu;cpu.ram=frame_backend.shadow;s_backend_palette=frame_backend.palette;
     SDL_Texture* initial_target=SDL_GetRenderTarget(s_renderer);
     for(u32 at=0;at<bytes;){
         const FrameOp* header=(const FrameOp*)(data+at);if(header->bytes<sizeof(*header) || header->bytes>bytes-at)return false;
@@ -280,6 +280,13 @@ static bool frame_execute(const u8* data,u32 bytes,void* ignored){
     }
     SDL_SetRenderTarget(s_renderer,initial_target);s_backend_palette=NULL;return true;
 }
+static bool frame_execute(const u8* data,u32 bytes,void* ignored){
+    (void)ignored;
+    bool timed=gx_gl_begin_gpu_packet();
+    bool ok=frame_execute_commands(data,bytes);
+    if(timed)gx_gl_end_gpu_packet();
+    return ok;
+}
 static void frame_report(GXFrameStats* r){
     gx_gl_get_stats(&r->gl);r->render=s_render_ticks;r->copy=s_copy_ticks;r->texture_copy=s_texture_copy_ticks;r->uploads=s_texture_uploads;
     r->texture_hits=s_tex_hits;r->hash_bytes=s_tex_hash_bytes;r->readbacks=s_texture_readbacks;r->vram_copies=s_vram_only_copies;r->vram_resolves=s_vram_materializations;
@@ -299,6 +306,7 @@ bool gx_pipe_frame_start(CPUState* cpu,SDL_Window* window){
     frame_backend.unique_bytes=frame_backend.reused_bytes=frame_backend.compare_ticks=0;memset(frame_snapshots,0,sizeof(frame_snapshots));
     SDL_GLContext context=SDL_GL_GetCurrentContext();
     if(!context || SDL_GL_GetCurrentWindow()!=window || !gx_frame_start(frame_execute,frame_report,NULL)){free(frame_backend.shadow);frame_backend.shadow=NULL;return false;}
+    if(getenv("TRACE_GPU_TIME"))printf("[GPU packet timer] enabled=%d\n",gx_gl_start_gpu_trace());
     printf("[GX frame pipeline] main-thread decode/GL, %u raw arenas, exact snapshot reuse; PE async, RAM readbacks remain barriers\n",GX_FRAME_ARENAS);return true;
 }
 bool gx_pipe_frame_stop(CPUState* cpu){

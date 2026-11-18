@@ -34,7 +34,7 @@ static const char* fragment_source = "#version 120\n" GLSL(
     varying vec4 raster;
     varying vec3 tc[8];
     uniform sampler2D image0,image1,image2,image3,image4,image5,image6,image7;
-    uniform vec4 initial[4],konst[4],swapTable[4];
+    uniform vec4 initial[4],stageKonst[16],swapTable[4];
     uniform ivec4 colorInput[16],alphaInput[16],colorOp[16],alphaOp[16];
     uniform ivec4 order[16],selectors[16];
     uniform int stages,bypass,alphaEnabled;
@@ -58,15 +58,6 @@ static const char* fragment_source = "#version 120\n" GLSL(
     }
     float alphaArg(int i,vec4 r[4],vec4 t,vec4 v,vec4 k) {
         if(i<4)return r[i].a; if(i==4)return t.a; if(i==5)return v.a; if(i==6)return k.a; return 0.0;
-    }
-    vec4 konstColor(int kc,int ka) {
-        vec4 result=vec4(0.0);
-        if(kc<8)result.rgb=vec3(kc==0 ? 255.0 : 256.0-float(kc)*32.0);
-        else if(kc>=12 && kc<16)result.rgb=konst[kc-12].rgb;
-        else if(kc>=16) { int n=kc-16; result.rgb=vec3(component(konst[int(mod(float(n),4.0))],n/4)); }
-        if(ka<8)result.a=ka==0 ? 255.0 : 256.0-float(ka)*32.0;
-        else if(ka>=16) { int n=ka-16; result.a=component(konst[int(mod(float(n),4.0))],n/4); }
-        return result;
     }
     bool compare(float a,float b,int op) {
         if(op==0)return false; if(op==1)return a<b; if(op==2)return a==b; if(op==3)return a<=b;
@@ -103,7 +94,7 @@ static const char* fragment_source = "#version 120\n" GLSL(
                 int rasterChannel=int(mod(float(o.w),8.0));
                 vec4 ras=(rasterChannel==7 || rasterChannel==5) ? vec4(0.0) : raster;
                 ras=swapColor(ras,s.z);
-                vec4 k=konstColor(s.x,s.y); ivec4 ci=colorInput[i],ai=alphaInput[i];
+                vec4 k=stageKonst[i]; ivec4 ci=colorInput[i],ai=alphaInput[i];
                 vec3 color=combine(colorArg(ci.x,r,texel,ras,k),colorArg(ci.y,r,texel,ras,k),colorArg(ci.z,r,texel,ras,k),colorArg(ci.w,r,texel,ras,k),colorOp[i]);
                 float alpha=combine(vec3(alphaArg(ai.x,r,texel,ras,k)),vec3(alphaArg(ai.y,r,texel,ras,k)),vec3(alphaArg(ai.z,r,texel,ras,k)),vec3(alphaArg(ai.w,r,texel,ras,k)),alphaOp[i]).r;
                 dc=o.z/2; da=o.w/8;
@@ -150,6 +141,64 @@ static PFNGLGENFRAMEBUFFERSPROC copyGen;static PFNGLBINDFRAMEBUFFERPROC copyBind
 static PFNGLCHECKFRAMEBUFFERSTATUSPROC copyCheck;static PFNGLBLITFRAMEBUFFERPROC copyBlit;static PFNGLDELETEFRAMEBUFFERSPROC copyDelete;
 static GXGLStats s_stats;
 void gx_gl_get_stats(GXGLStats* stats){*stats=s_stats;}
+static bool s_draw_trace;
+void gx_gl_set_draw_trace(bool enabled){s_draw_trace=enabled;}
+
+enum {GPU_QUERY_SLOTS=16};
+static struct {
+    PFNGLGENQUERIESPROC generate;
+    PFNGLDELETEQUERIESPROC destroy;
+    PFNGLBEGINQUERYPROC begin;
+    PFNGLENDQUERYPROC end;
+    PFNGLGETQUERYOBJECTIVPROC available;
+    PFNGLGETQUERYOBJECTUI64VPROC result;
+    GLuint ids[GPU_QUERY_SLOTS];
+    unsigned head, count;
+    bool enabled;
+} s_gpu_trace;
+bool gx_gl_start_gpu_trace(void){
+    if(s_gpu_trace.enabled)return true;
+    if(!SDL_GL_ExtensionSupported("GL_ARB_timer_query"))return false;
+    s_gpu_trace.generate=(PFNGLGENQUERIESPROC)SDL_GL_GetProcAddress("glGenQueries");
+    s_gpu_trace.destroy=(PFNGLDELETEQUERIESPROC)SDL_GL_GetProcAddress("glDeleteQueries");
+    s_gpu_trace.begin=(PFNGLBEGINQUERYPROC)SDL_GL_GetProcAddress("glBeginQuery");
+    s_gpu_trace.end=(PFNGLENDQUERYPROC)SDL_GL_GetProcAddress("glEndQuery");
+    s_gpu_trace.available=(PFNGLGETQUERYOBJECTIVPROC)SDL_GL_GetProcAddress("glGetQueryObjectiv");
+    s_gpu_trace.result=(PFNGLGETQUERYOBJECTUI64VPROC)SDL_GL_GetProcAddress("glGetQueryObjectui64v");
+    PFNGLGETQUERYIVPROC get_query=(PFNGLGETQUERYIVPROC)SDL_GL_GetProcAddress("glGetQueryiv");
+    if(!s_gpu_trace.generate || !s_gpu_trace.destroy || !s_gpu_trace.begin || !s_gpu_trace.end ||
+       !s_gpu_trace.available || !s_gpu_trace.result || !get_query)return false;
+    GLint bits=0;
+    get_query(GL_TIME_ELAPSED,GL_QUERY_COUNTER_BITS,&bits);
+    if(bits<=0)return false;
+    s_gpu_trace.generate(GPU_QUERY_SLOTS,s_gpu_trace.ids);
+    s_gpu_trace.enabled=true;
+    return true;
+}
+bool gx_gl_begin_gpu_packet(void){
+    if(!s_gpu_trace.enabled)return false;
+    while(s_gpu_trace.count){
+        GLuint id=s_gpu_trace.ids[s_gpu_trace.head];
+        GLint ready=GL_FALSE;
+        s_gpu_trace.available(id,GL_QUERY_RESULT_AVAILABLE,&ready);
+        if(!ready)break;
+        GLuint64 elapsed=0;
+        s_gpu_trace.result(id,GL_QUERY_RESULT,&elapsed);
+        s_stats.gpu_elapsed_ns+=elapsed;
+        s_stats.gpu_samples++;
+        s_gpu_trace.head=(s_gpu_trace.head+1)%GPU_QUERY_SLOTS;
+        s_gpu_trace.count--;
+    }
+    if(s_gpu_trace.count==GPU_QUERY_SLOTS){s_stats.gpu_skipped++;return false;}
+    unsigned tail=(s_gpu_trace.head+s_gpu_trace.count)%GPU_QUERY_SLOTS;
+    s_gpu_trace.begin(GL_TIME_ELAPSED,s_gpu_trace.ids[tail]);
+    return true;
+}
+void gx_gl_end_gpu_packet(void){
+    s_gpu_trace.end(GL_TIME_ELAPSED);
+    s_gpu_trace.count++;
+}
+
 static GLint uniform_location(GLuint program,const char* name){s_stats.uniform_lookups++;return gGetUniformLocation(program,name);}
 
 typedef struct {GLfloat clip[4];u8 color[4];GLfloat texcoord[8][4],normal[3];} HostVertex;
@@ -186,7 +235,7 @@ static float s_internal_scale=1.0f;
 void gx_gl_set_geometry_cache(bool enabled){s_geometry_cache_enabled=enabled;}
 bool gx_gl_geometry_cache(void){return s_geometry_cache_enabled;}
 void gx_gl_set_internal_scale(float scale){
-    if(scale<1.0f)scale=1.0f;if(scale>4.0f)scale=4.0f;
+    if(scale<1.0f)scale=1.0f;if(scale>6.0f)scale=6.0f;
     if(fabsf(s_internal_scale-scale)>0.001f){
         s_internal_scale=scale;
         if(s_depth && gDeleteRenderbuffers){gDeleteRenderbuffers(1,&s_depth);s_depth=0;s_depth_fbo=0;}
@@ -245,7 +294,7 @@ static GLuint compile_shader(GLenum type,const char* source) {
 }
 static TevUniforms find_tev_uniforms(GLuint program) {
 #define UNIFORM(var,name) var=uniform_location(program,name)
-    UNIFORM(u_initial,"initial");UNIFORM(u_konst,"konst");UNIFORM(u_swap,"swapTable");
+    UNIFORM(u_initial,"initial");UNIFORM(u_konst,"stageKonst");UNIFORM(u_swap,"swapTable");
     UNIFORM(u_ci,"colorInput");UNIFORM(u_ai,"alphaInput");UNIFORM(u_co,"colorOp");UNIFORM(u_ao,"alphaOp");
     UNIFORM(u_order,"order");UNIFORM(u_select,"selectors");UNIFORM(u_stages,"stages");UNIFORM(u_bypass,"bypass");
     UNIFORM(u_alpha,"alphaEnabled");UNIFORM(u_atest,"alphaTest");UNIFORM(u_aref,"alphaRef");
@@ -352,24 +401,34 @@ static float reg_component(const u32* words,u32 reg,u32 c,bool is_konst) {
     u32 ra=words[reg*2],bg=words[reg*2+1];u32 value=c==0 ? ra&2047 : c==1 ? (bg>>12)&2047 : c==2 ? bg&2047 : (ra>>12)&2047;
     return is_konst ? (float)(value&255) : (float)((value&1024) ? (int)value-2048 : (int)value);
 }
+static GLfloat tev_stage_konst(const u32* registers,u32 selector,u32 channel) {
+    if(selector<8) return selector==0 ? 255.0f : (GLfloat)(256u-selector*32u);
+    if(selector>=16) return reg_component(registers,selector&3u,(selector-16u)/4u,true);
+    if(selector>=12 && channel<3) return reg_component(registers,selector-12u,channel,true);
+    return 0.0f;
+}
 static bool gx_gl_draw_internal_timed_body(SDL_Renderer* renderer,const GXGLMaterial* m,SDL_Texture* textures[8],const GXGLVertex* vertices,u32 stride,u32 count,u8 primitive,const GXGLRawVertex* raw,const GXGLTransform* xf,u64 validated_hash) {
     if(!count)return true;
     if(!gx_gl_available(renderer) || (raw && !gx_gl_xf_available(renderer)))return false;
     s_u=s_tev_uniforms[raw ? 1:0];
     static const GLenum types[8]={GL_QUADS,GL_QUADS,GL_TRIANGLES,GL_TRIANGLE_STRIP,GL_TRIANGLE_FAN,GL_LINES,GL_LINE_STRIP,GL_POINTS};
     if(primitive<0x80 || primitive>0xB8)return true;
+    u64 draw_start=s_draw_trace ? SDL_GetPerformanceCounter():0;
     SDL_RenderFlush(renderer);ensure_depth();GLint program,active;
-    glGetIntegerv(GL_CURRENT_PROGRAM,&program);glGetIntegerv(GL_ACTIVE_TEXTURE,&active);glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glGetIntegerv(GL_CURRENT_PROGRAM,&program);glGetIntegerv(GL_ACTIVE_TEXTURE,&active);
+    // Draw changes the raster, texture and clip state; vertex arrays are saved separately.
+    glPushAttrib(GL_CURRENT_BIT | GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+                 GL_POLYGON_BIT | GL_SCISSOR_BIT | GL_TEXTURE_BIT | GL_TRANSFORM_BIT | GL_VIEWPORT_BIT);
     FrameStage preparation=frame_timing_enter(FRAME_GX_DECODE);
     u32 stages=((m->bp[0]>>10)&15u)+1,used=0;
     GLint ci[16][4],ai[16][4],co[16][4],ao[16][4],order[16][4],select[16][4];
-    GLfloat initial[4][4],konst[4][4],swaps[4][4];
-    for(u32 r=0;r<4;r++)for(u32 c=0;c<4;c++){initial[r][c]=reg_component(m->colors,r,c,false);konst[r][c]=reg_component(m->konst,r,c,true);}
+    GLfloat initial[4][4],stage_konst[16][4],swaps[4][4];
+    for(u32 r=0;r<4;r++)for(u32 c=0;c<4;c++)initial[r][c]=reg_component(m->colors,r,c,false);
     for(u32 r=0;r<4;r++) {u32 first=m->bp[0xF6+r*2],second=m->bp[0xF7+r*2];swaps[r][0]=(float)(first&3);swaps[r][1]=(float)((first>>2)&3);swaps[r][2]=(float)(second&3);swaps[r][3]=(float)((second>>2)&3);}
     /* Default identity is used until swap-table registers have been configured. */
     bool any_swap=false;for(u32 r=0;r<8;r++)any_swap|=(m->bp[0xF6+r]&15)!=0;
     if(!any_swap)for(u32 r=0;r<4;r++)for(u32 c=0;c<4;c++)swaps[r][c]=(float)c;
-    for(u32 i=0;i<16;i++) {
+    for(u32 i=0;i<stages;i++) {
         u32 color=m->bp[0xC0+i*2],alpha=m->bp[0xC1+i*2],o=m->bp[0x28+i/2]>>((i&1)*12),k=m->bp[0xF6+i/2]>>((i&1)*10);
         ci[i][0]=(color>>12)&15;ci[i][1]=(color>>8)&15;ci[i][2]=(color>>4)&15;ci[i][3]=color&15;
         ai[i][0]=(alpha>>13)&7;ai[i][1]=(alpha>>10)&7;ai[i][2]=(alpha>>7)&7;ai[i][3]=(alpha>>4)&7;
@@ -377,8 +436,10 @@ static bool gx_gl_draw_internal_timed_body(SDL_Renderer* renderer,const GXGLMate
         order[i][0]=o&7;order[i][1]=(o>>3)&7;
         /* Pack destination with enable/channel; shader unpacks arithmetically (GLSL 1.20). */
         order[i][2]=((color>>22)&3)*2+((o>>6)&1);order[i][3]=((alpha>>22)&3)*8+((o>>7)&7);
-        select[i][0]=(k>>4)&31;select[i][1]=(k>>9)&31;select[i][2]=alpha&3;select[i][3]=(alpha>>2)&3;
-        if(i<stages && (o&64))used|=1u<<(o&7);
+        select[i][0]=0;select[i][1]=0;select[i][2]=alpha&3;select[i][3]=(alpha>>2)&3;
+        for(u32 c=0;c<3;c++)stage_konst[i][c]=tev_stage_konst(m->konst,(k>>4)&31,c);
+        stage_konst[i][3]=tev_stage_konst(m->konst,(k>>9)&31,3);
+        if(o&64)used|=1u<<(o&7);
     }
     frame_timing_leave(preparation);
     for(u32 i=0;i<8;i++)if(used&(1u<<i)) {
@@ -391,9 +452,9 @@ static bool gx_gl_draw_internal_timed_body(SDL_Renderer* renderer,const GXGLMate
             glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,((mode>>5)&4) ? GL_LINEAR : GL_NEAREST);
         } else {glBindTexture(GL_TEXTURE_2D,0);}
     }
-    gUseProgram(raw ? s_xf_program:s_program);if(raw)upload_xf(xf,true);gUniform4fv(u_initial,4,&initial[0][0]);gUniform4fv(u_konst,4,&konst[0][0]);gUniform4fv(u_swap,4,&swaps[0][0]);
-    gUniform4iv(u_ci,16,&ci[0][0]);gUniform4iv(u_ai,16,&ai[0][0]);gUniform4iv(u_co,16,&co[0][0]);gUniform4iv(u_ao,16,&ao[0][0]);
-    gUniform4iv(u_order,16,&order[0][0]);gUniform4iv(u_select,16,&select[0][0]);gUniform1i(u_stages,(GLint)stages);gUniform1i(u_bypass,!m->tev_valid);
+    gUseProgram(raw ? s_xf_program:s_program);if(raw)upload_xf(xf,true);gUniform4fv(u_initial,4,&initial[0][0]);gUniform4fv(u_konst,(GLsizei)stages,&stage_konst[0][0]);gUniform4fv(u_swap,4,&swaps[0][0]);
+    gUniform4iv(u_ci,(GLsizei)stages,&ci[0][0]);gUniform4iv(u_ai,(GLsizei)stages,&ai[0][0]);gUniform4iv(u_co,(GLsizei)stages,&co[0][0]);gUniform4iv(u_ao,(GLsizei)stages,&ao[0][0]);
+    gUniform4iv(u_order,(GLsizei)stages,&order[0][0]);gUniform4iv(u_select,(GLsizei)stages,&select[0][0]);gUniform1i(u_stages,(GLint)stages);gUniform1i(u_bypass,!m->tev_valid);
     u32 at=m->bp[0xF3];GLint test[4]={(at>>16)&7,(at>>19)&7,(at>>22)&3,0};GLfloat refs[2]={(float)(at&255),(float)((at>>8)&255)};
     gUniform4iv(u_atest,1,test);gUniform2fv(u_aref,1,refs);gUniform1i(u_alpha,m->alpha_valid);
     int efb_w=(int)(640.0f*s_internal_scale+0.5f),efb_h=(int)(528.0f*s_internal_scale+0.5f);
@@ -481,7 +542,13 @@ glDisable(GL_LIGHTING);glDisable(GL_ALPHA_TEST);glDisable(GL_FOG);glDisable(GL_S
         glTexCoordPointer(4,GL_FLOAT,sizeof(HostVertex),(const GLvoid*)(uintptr_t)(base+offsetof(HostVertex,texcoord)+j*4*sizeof(GLfloat)));
     }
 #undef STREAM_FIELD
-    glDrawArrays(types[(primitive-0x80)/8],0,(GLsizei)count);s_stats.draws++;
+    if(s_draw_trace){
+        u64 submit_start=SDL_GetPerformanceCounter();
+        s_stats.draw_prepare_ticks+=submit_start-draw_start;
+        glDrawArrays(types[(primitive-0x80)/8],0,(GLsizei)count);
+        s_stats.draw_submit_ticks+=SDL_GetPerformanceCounter()-submit_start;
+    }else glDrawArrays(types[(primitive-0x80)/8],0,(GLsizei)count);
+    s_stats.draws++;
     glPopClientAttrib();gBindBuffer(GL_ARRAY_BUFFER,(GLuint)previous_buffer);
     gUseProgram((GLuint)program);gActiveTexture((GLenum)active);glPopAttrib();return true;
 }
@@ -723,6 +790,8 @@ bool gx_gl_pack_yuy2(SDL_Renderer* renderer,SDL_Texture* efb,const SDL_Rect* sou
     return ok;
 }
 void gx_gl_shutdown(void) {
+    if(s_gpu_trace.enabled)s_gpu_trace.destroy(GPU_QUERY_SLOTS,s_gpu_trace.ids);
+    memset(&s_gpu_trace,0,sizeof(s_gpu_trace));
     for(u32 i=0;i<128;i++)geometry_evict(i);memset(s_geometry_candidates,0,sizeof(s_geometry_candidates));s_geometry_serial=0;
     if(s_copy_program && gDeleteProgram)gDeleteProgram(s_copy_program);s_copy_program=0;s_copy_init=0;
     if(s_copy_fbo && copyDelete)copyDelete(1,&s_copy_fbo);s_copy_fbo=0;s_copy_procs_checked=false;

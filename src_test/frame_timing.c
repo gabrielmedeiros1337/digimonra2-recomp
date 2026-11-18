@@ -47,15 +47,17 @@ void frame_timing_leave(FrameStage previous){
     if(!s_worker && previous!=FRAME_STAGE_COUNT && s.active && previous!=s.stage)
         transition(&s,previous,counter());
 }
-static bool finish(TimingState* state,uint64_t now,FrameTimingReport* report){
+static bool finish(TimingState* state,uint64_t now,FrameTimingReport* report,FrameTimingSample* sample){
     assert(state->active && state->stage==FRAME_OTHER);
     transition(state,FRAME_OTHER,now);state->active=false;
     for(unsigned i=0;i<FRAME_STAGE_COUNT;i++){
         uint64_t elapsed=state->ticks[i]-state->begin_ticks[i];
+        if(sample)sample->stage_ticks[i]=elapsed;
         if(elapsed>state->peak_ticks[i])state->peak_ticks[i]=elapsed;
     }
     if(now-state->start>state->wall_peak)state->wall_peak=now-state->start;
     state->wall+=now-state->start;
+    if(sample)sample->wall_ticks=now-state->start;
     if(++state->frames<60)return false;
     double scale=1000.0/(double)state->hz/state->frames;
     for(unsigned i=0;i<FRAME_STAGE_COUNT;i++)report->ms[i]=state->ticks[i]*scale;
@@ -64,7 +66,10 @@ static bool finish(TimingState* state,uint64_t now,FrameTimingReport* report){
     report->wall_ms=state->wall*scale;report->frames=state->frames;
     memset(state->ticks,0,sizeof(state->ticks));memset(state->peak_ticks,0,sizeof(state->peak_ticks));state->wall_peak=0;state->frames=0;state->wall=0;return true;
 }
-bool frame_timing_end(FrameTimingReport* report){return finish(&s,counter(),report);}
+bool frame_timing_end_sample(FrameTimingReport* report,FrameTimingSample* sample){
+    return finish(&s,counter(),report,sample);
+}
+bool frame_timing_end(FrameTimingReport* report){return frame_timing_end_sample(report,NULL);}
 
 // A missed deadline is immediately runnable; never round up to another
 // VBlank. Rebase after lateness rather than accumulating catch-up debt.
@@ -80,7 +85,7 @@ int frame_timing_contracts(void){
        frame_pacer_target(0,2400,hz)!=2400 ||
        frame_pacer_target(0,3100,hz)!=3100 ||
        frame_pacer_target(1020,1500,hz)!=2020)return 1;
-    TimingState t={0};FrameTimingReport report;t.hz=1000;
+    TimingState t={0};FrameTimingReport report;FrameTimingSample sample;t.hz=1000;
     for(unsigned frame=0;frame<60;frame++){
         uint64_t base=frame*100;t.active=true;t.stage=FRAME_OTHER;t.start=t.last=base;
         memcpy(t.begin_ticks,t.ticks,sizeof(t.ticks));
@@ -90,10 +95,11 @@ int frame_timing_contracts(void){
         FrameStage draw=transition(&t,FRAME_GL_SUBMIT,base+55);
         transition(&t,draw,base+60);transition(&t,copy,base+65);
         transition(&t,gx,base+70);transition(&t,game,base+80);
-        bool ready=finish(&t,base+100,&report);
+        bool ready=finish(&t,base+100,&report,&sample);
         if(ready!=(frame==59))return 1;
     }
     const double expected[]={25,40,15,5,15,0,0};double sum=0;
     for(unsigned i=0;i<FRAME_STAGE_COUNT;i++){if(report.ms[i]!=expected[i] || report.peak_ms[i]!=expected[i])return 1;sum+=report.ms[i];}
-    return sum!=report.wall_ms || report.frames!=60 || report.wall_peak_ms!=100;
+    for(unsigned i=0;i<FRAME_STAGE_COUNT;i++)if(sample.stage_ticks[i]!=(uint64_t)expected[i])return 1;
+    return sum!=report.wall_ms || report.frames!=60 || report.wall_peak_ms!=100 || sample.wall_ticks!=100;
 }

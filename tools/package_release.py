@@ -20,6 +20,7 @@ def package(source: Path, binary: Path, output: Path) -> dict:
         "SDL2.dll": binary / "SDL2.dll",
         "dsp_coef.bin": binary / "dsp_coef.bin",
         "README.pt-BR.txt": source / "distribution/README.pt-BR.txt",
+        "LICENSE": source / "LICENSE",
         "config/launcher_config.json": source / "distribution/config/launcher_config.json",
         "config/runtime_tuning.cfg": source / "distribution/config/runtime_tuning.cfg",
         "config/dispatch_chain.cfg": source / "distribution/config/dispatch_chain.cfg",

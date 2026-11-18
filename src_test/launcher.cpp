@@ -66,7 +66,7 @@ struct LocStrings {
     const wchar_t* lbl_win_res;
     const wchar_t* win_res[7];
     const wchar_t* lbl_int_res;
-    const wchar_t* int_res[5];
+    const wchar_t* int_res[6];
     const wchar_t* lbl_aspect_ratio;
     const wchar_t* aspect_ratios[2];
     const wchar_t* lbl_win_mode;
@@ -165,7 +165,8 @@ static const LocStrings strings_pt = {
         L"1.5x (~720p / 768p Notebooks - 960x792)",
         L"2x (HD - 1280x1056)",
         L"3x (Full HD 1080p - 1920x1584)",
-        L"4x (Quad HD 1440p - 2560x2112)"
+        L"4x (2560x2112)",
+        L"6x (4K - 3840x3168)"
     },
     L"Proporção de Tela (Aspect Ratio):",
     {
@@ -278,7 +279,8 @@ static const LocStrings strings_en = {
         L"1.5x (~720p / 768p Laptops - 960x792)",
         L"2x (HD - 1280x1056)",
         L"3x (Full HD 1080p - 1920x1584)",
-        L"4x (Quad HD 1440p - 2560x2112)"
+        L"4x (2560x2112)",
+        L"6x (4K - 3840x3168)"
     },
     L"Aspect Ratio:",
     {
@@ -1341,7 +1343,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     lbl_int_res_title = label(loc().lbl_int_res, 54, 268, 420, 20, small_font);
     internal_res_choice = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 413, 54, 290, 420, 220);
     for (auto ir : loc().int_res) SendMessageW(internal_res_choice, CB_ADDSTRING, 0, (LPARAM)ir);
-    SendMessageW(internal_res_choice, CB_SETCURSEL, config.internal_resolution >= 0 && config.internal_resolution < 5 ? config.internal_resolution : 0, 0);
+    SendMessageW(internal_res_choice, CB_SETCURSEL, config.internal_resolution >= 0 && config.internal_resolution < 6 ? config.internal_resolution : 0, 0);
 
     lbl_aspect_title = label(loc().lbl_aspect_ratio, 54, 342, 420, 20, small_font);
     aspect_ratio_choice = control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 414, 54, 364, 420, 180);

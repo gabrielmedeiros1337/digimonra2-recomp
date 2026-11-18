@@ -11,6 +11,7 @@ spec = importlib.util.spec_from_file_location("package_release", root / "tools/p
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 required = [
+    "LICENSE",
     "distribution/README.pt-BR.txt", "distribution/config/launcher_config.json",
     "distribution/config/runtime_tuning.cfg", "distribution/config/dispatch_chain.cfg",
     "third_party/SDL2/LICENSE.txt", "third_party/recomp-deps/DolRecomp/LICENSE",
@@ -19,6 +20,7 @@ required = [
 external = "third_party/recomp-deps/dolphin/Externals/"
 required += [external + p for p in ("picojson/LICENSE", "bzip2/bzip2/LICENSE", "liblzma/COPYING", "zstd/zstd/LICENSE")]
 scratch_root = (root / "build_test").resolve()
+scratch_root.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="package_contract_", dir=scratch_root) as temporary:
     temp = Path(temporary).resolve()
     assert temp.is_relative_to(scratch_root)
@@ -34,7 +36,8 @@ with tempfile.TemporaryDirectory(prefix="package_contract_", dir=scratch_root) a
         return SimpleNamespace(stdout="a" * 40 + "\n" if arguments[1] == "rev-parse" else "", returncode=0)
     with patch.object(module.subprocess, "run", side_effect=git):
         manifest = module.package(source, binaries, output)
-        assert len(manifest["files_sha256"]) == 15
+        assert len(manifest["files_sha256"]) == 16
+        assert "LICENSE" in manifest["files_sha256"]
         assert not any(p.suffix in (".iso", ".dol", ".map", ".pdb", ".log") for p in output.rglob("*"))
         (output / "saves/MemoryCardA.card").write_bytes(b"user progress")
         (output / "config/launcher_config.json").write_text('{"user":"settings"}')

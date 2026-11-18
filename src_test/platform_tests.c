@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <float.h>
+#include <fenv.h>
 #ifdef _MSC_VER
 #include <malloc.h>
 #else
@@ -727,6 +728,8 @@ int platform_self_test(void) {
     CHECK(fp_guard_contracts()==0);
     CHECK(scalar_memory_contracts()==0);
     CHECK(paired_skinning_contracts()==0);
+    // Software GL driver workers inherit their creator's floating-point mode.
+    CHECK(fesetround(FE_TONEAREST)==0);
     SDL_setenv("GX_VALIDATE_WORKERS","1",1);
     SDL_setenv("GX_VALIDATE_COPY","1",1);
     SDL_SetMainReady();

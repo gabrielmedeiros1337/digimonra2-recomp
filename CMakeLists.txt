@@ -217,6 +217,9 @@ if(MSVC)
 else()
     target_compile_options(digimon_test PRIVATE -O3 -fno-stack-protector -ffast-math -pthread -w)
     target_link_options(digimon_test PRIVATE -pthread)
+    # Guest CPU and GX fallbacks require exact non-finite values and rounding.
+    set_property(SOURCE ${CPU_SOURCES} src_test/gx_pipe.c src_test/platform_tests.c APPEND PROPERTY COMPILE_OPTIONS
+        -fno-fast-math -ffp-contract=off -frounding-math)
     foreach(CHUNK_SOURCE IN LISTS CHUNK_SOURCES)
         set_property(SOURCE "${CHUNK_SOURCE}" APPEND PROPERTY COMPILE_OPTIONS "-include" "primary_ram.h" "-include" "hot_float_adapter.h")
         if(CHUNK_SOURCE MATCHES "_(8023B4C0|802474C0|8024B4C0)\\.c$")

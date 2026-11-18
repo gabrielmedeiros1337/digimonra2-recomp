@@ -26,7 +26,10 @@ jobs:
             libgl1-mesa-dev \
             libssl-dev \
             python3 \
-            python3-tk
+            python3-tk \
+            xvfb \
+            xauth \
+            libgl1-mesa-dri
 
       - name: Configure CMake
         run: |
@@ -39,9 +42,10 @@ jobs:
 
       - name: Run contract tests
         env:
-          SDL_VIDEODRIVER: dummy
-        run: |
-          ctest --test-dir build -C Release --output-on-failure -E "package_release_contracts|platform_contracts|gx_gpu_xf_contracts|sdk_bounds_contracts|native_top_contracts|display_mode_contracts" || true
+          SDL_VIDEODRIVER: x11
+          SDL_AUDIODRIVER: dummy
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a ctest --test-dir build -C Release --output-on-failure
 
       - name: Create Linux portable release package
         run: |
@@ -54,5 +58,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DigimonRA2_PC_Linux_x64
-          path: DigimonRA2_PC_Linux_x64.tar.gz
+          path: |
+            DigimonRA2_PC_Linux_x64.zip
+            DigimonRA2_PC_Linux_x64.tar.gz
           if-no-files-found: error

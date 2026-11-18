@@ -1136,7 +1136,7 @@ int main(int argc, char** argv) {
     static const struct { int w, h; } s_window_res_table[] = {
         {640, 480}, {1280, 720}, {1366, 768}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3840, 2160}
     };
-    static const float s_internal_res_table[] = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
+    static const float s_internal_res_table[] = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f };
     int win_w = 1280, win_h = 720;
     if(launch_config.window_resolution >= 0 && launch_config.window_resolution < (int)(sizeof(s_window_res_table)/sizeof(s_window_res_table[0]))){
         win_w = s_window_res_table[launch_config.window_resolution].w;
@@ -1164,6 +1164,7 @@ int main(int argc, char** argv) {
         }
     }
     gx_pipe_set_internal_scale(efb_scale);
+    efb_scale=gx_pipe_get_internal_scale();
     gx_pipe_set_aspect_ratio(aspect_ratio);
     s_aspect_ratio = aspect_ratio;
     printf("[Video Configuration] Window: %dx%d, Internal EFB scale: %.2fx (%dx%d), Aspect Ratio: %s\n",
@@ -1306,6 +1307,18 @@ int main(int argc, char** argv) {
     u64 previous_vertex_hits=0,previous_vertex_misses=0;
     u64 previous_decode_ticks=0,previous_texture_copy_ticks=0;
     bool trace_runtime=getenv("RUNTIME_TRACE")!=NULL;
+    bool trace_slow_frames=getenv("TRACE_SLOW_FRAMES")!=NULL;
+    gx_gl_set_draw_trace(trace_slow_frames);
+    typedef struct {
+        u64 frame, work_late, pacing_gx, sleep, wake_late;
+        u64 backend_work, backend_draw, backend_swap, queue_wait, queue_limit;
+        u64 draw_prepare, draw_submit;
+        FrameTimingSample timing;
+    } SlowFrame;
+    SlowFrame slow_frames[60];
+    unsigned slow_frame_count=0;
+    GXFrameStats prior_frame_gx={0};
+    bool prior_frame_traced=false;
     bool profile_cpu=getenv("CPU_PROFILE")!=NULL;
     u32 profile_random=1;u64 profile_deadline=next_frame_deadline+pacing_frequency*5u;
 
@@ -1526,16 +1539,28 @@ int main(int argc, char** argv) {
         // One host pacing source: no swap-interval wait plus a second frame cap.
         FrameStage pacing_stage=frame_timing_enter(FRAME_PACING);
         u64 now=SDL_GetPerformanceCounter();
+        const bool trace_frame=trace_slow_frames && in_combat && guest_completed;
+        const u64 pacing_begin=now;
+        const u64 scheduled=trace_frame ? next_frame_deadline+pacing_frequency/60u:0;
         // A watchdog yield is a continuation of this VI, never a host frame.
         // Don't charge it an extra 16.67ms before resuming unfinished work.
         if(guest_completed)next_frame_deadline=frame_pacer_target(next_frame_deadline,now,pacing_frequency);
         else next_frame_deadline=now;
+        // Submit pending graphics during the available pacing time, before
+        // the next CPU frame can encounter backpressure from those packets.
+        if(guest_completed && gx_frame_active()){
+            const u64 reserve=pacing_frequency/500u;
+            while(now<next_frame_deadline && next_frame_deadline-now>reserve && gx_frame_pump(false))
+                now=SDL_GetPerformanceCounter();
+        }
+        const u64 wait_begin=now;
         while(now<next_frame_deadline) {
             u32 remaining=(u32)((next_frame_deadline-now)*1000u/pacing_frequency);
             SDL_Delay(remaining>1 ? remaining-1 : 0);
             now=SDL_GetPerformanceCounter();
         }
 
+        const u64 wait_end=now;
         frame_timing_leave(pacing_stage);
 
         // Update window title with FPS and executed blocks every second
@@ -1665,7 +1690,45 @@ int main(int argc, char** argv) {
             start_time = current_time;
         }
         FrameTimingReport frame_report;
-        if(frame_timing_end(&frame_report)) {
+        FrameTimingSample frame_sample;
+        bool report_ready=frame_timing_end_sample(&frame_report,trace_frame ? &frame_sample:NULL);
+        if(trace_frame){
+            GXFrameStats graphics;
+            gx_frame_stats(&graphics);
+            if(prior_frame_traced && gx_frame_active() && frame_sample.wall_ticks>pacing_frequency/60u &&
+                slow_frame_count<sizeof(slow_frames)/sizeof(slow_frames[0])){
+                SlowFrame* sample=&slow_frames[slow_frame_count++];
+                sample->frame=s_total_frames;
+                sample->timing=frame_sample;
+                sample->work_late=pacing_begin>scheduled ? pacing_begin-scheduled:0;
+                sample->pacing_gx=wait_begin-pacing_begin;
+                sample->sleep=wait_end-wait_begin;
+                sample->wake_late=wait_begin<next_frame_deadline ? wait_end-next_frame_deadline:0;
+                sample->backend_work=graphics.worker_ticks-prior_frame_gx.worker_ticks;
+                sample->backend_draw=graphics.draw_ticks-prior_frame_gx.draw_ticks;
+                sample->backend_swap=graphics.swap_ticks-prior_frame_gx.swap_ticks;
+                sample->draw_prepare=graphics.gl.draw_prepare_ticks-prior_frame_gx.gl.draw_prepare_ticks;
+                sample->draw_submit=graphics.gl.draw_submit_ticks-prior_frame_gx.gl.draw_submit_ticks;
+                sample->queue_wait=graphics.wait_ticks-prior_frame_gx.wait_ticks;
+                sample->queue_limit=graphics.frame_limit_ticks-prior_frame_gx.frame_limit_ticks;
+            }
+            prior_frame_gx=graphics;
+        }
+        prior_frame_traced=trace_frame && gx_frame_active();
+        if(report_ready) {
+            double trace_ms=1000.0/pacing_frequency;
+            for(unsigned i=0;i<slow_frame_count;i++){
+                const SlowFrame* sample=&slow_frames[i];
+                printf("[SlowFrame] frame=%llu wall_ms=%.4f game_ms=%.4f gx_decode_ms=%.4f host_other_ms=%.4f work_late_ms=%.4f pacing_gx_ms=%.4f sleep_ms=%.4f wake_late_ms=%.4f backend_work_ms=%.4f backend_draw_ms=%.4f backend_swap_ms=%.4f queue_wait_ms=%.4f queue_limit_ms=%.4f draw_prepare_ms=%.4f draw_submit_ms=%.4f\n",
+                    sample->frame,sample->timing.wall_ticks*trace_ms,
+                    sample->timing.stage_ticks[FRAME_GAME]*trace_ms,sample->timing.stage_ticks[FRAME_GX_DECODE]*trace_ms,
+                    sample->timing.stage_ticks[FRAME_OTHER]*trace_ms,sample->work_late*trace_ms,
+                    sample->pacing_gx*trace_ms,sample->sleep*trace_ms,sample->wake_late*trace_ms,
+                    sample->backend_work*trace_ms,sample->backend_draw*trace_ms,sample->backend_swap*trace_ms,
+                    sample->queue_wait*trace_ms,sample->queue_limit*trace_ms,
+                    sample->draw_prepare*trace_ms,sample->draw_submit*trace_ms);
+            }
+            slow_frame_count=0;
             static u64 prior_hosts,prior_calls,prior_links,prior_budget_stops,prior_fence_stops;
             printf("[Dispatch60] enabled=%u hosts=%llu calls=%llu links=%llu budget_stops=%llu fence_stops=%llu\n",s_chain_requested,
                 s_dispatch_stats.hosts-prior_hosts,s_dispatch_stats.calls-prior_calls,s_dispatch_stats.links-prior_links,
@@ -1734,6 +1797,11 @@ int main(int argc, char** argv) {
                 printf("[Render snapshot60] capture_unique_bytes_per_frame=%.0f capture_reused_bytes_per_frame=%.0f capture_compare_ms=%.4f arenas=%u\n",
                     (double)(pipeline.unique_bytes-previous_pipeline.unique_bytes)/frame_report.frames,(double)(pipeline.reused_bytes-previous_pipeline.reused_bytes)/frame_report.frames,
                     (pipeline.compare_ticks-previous_pipeline.compare_ticks)*scale,GX_FRAME_ARENAS);
+                if(pipeline.gl.gpu_samples || pipeline.gl.gpu_skipped){
+                    printf("[GPU packet60] elapsed_gpu_ms=%.4f samples=%llu skipped=%llu\n",
+                        (pipeline.gl.gpu_elapsed_ns-previous_pipeline.gl.gpu_elapsed_ns)/1000000.0,
+                        pipeline.gl.gpu_samples-previous_pipeline.gl.gpu_samples,pipeline.gl.gpu_skipped-previous_pipeline.gl.gpu_skipped);
+                }
                 previous_pipeline=pipeline;
                 printf("[Render credits] frames_queued=%llu frames_presented=%llu frame_limit_ms_total=%.3f\n",pipeline.frames_queued,pipeline.frames_presented,pipeline.frame_limit_ticks*1000.0/(double)pacing_frequency);
             }

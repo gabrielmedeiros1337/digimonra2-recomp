@@ -15,7 +15,7 @@ namespace fs=std::filesystem;
 static fs::path path8(const char* s){return fs::path(std::u8string(reinterpret_cast<const char8_t*>(s)));}
 const char* const launcher_key_names[KEY_BIND_COUNT]={"A","B","X","Y","Z","Start","L","R","Stick Up","Stick Down","Stick Left","Stick Right","D-Pad Up","D-Pad Down","D-Pad Left","D-Pad Right","C-Stick Up","C-Stick Down","C-Stick Left","C-Stick Right"};
 void launcher_config_defaults(LauncherConfig* c){
-    memset(c,0,sizeof(*c));c->keyboard_enabled=true;c->window_resolution=1;c->internal_resolution=0;c->aspect_ratio=0;c->unlock_all=false;
+    memset(c,0,sizeof(*c));c->keyboard_enabled=false;c->window_resolution=1;c->internal_resolution=0;c->aspect_ratio=0;c->unlock_all=false;
 #ifdef _WIN32
     LANGID lang = GetUserDefaultUILanguage();
     if (PRIMARYLANGID(lang) == LANG_PORTUGUESE) {
@@ -26,7 +26,7 @@ void launcher_config_defaults(LauncherConfig* c){
 #else
     strcpy_s(c->language, "pt-BR");
 #endif
-    strcpy_s(c->ports[0],"keyboard");for(int i=1;i<4;i++)strcpy_s(c->ports[i],"none");
+    strcpy_s(c->ports[0],"auto");for(int i=1;i<4;i++)strcpy_s(c->ports[i],"none");
     const int keys[KEY_BIND_COUNT]={SDL_SCANCODE_Z,SDL_SCANCODE_X,SDL_SCANCODE_C,SDL_SCANCODE_V,SDL_SCANCODE_TAB,SDL_SCANCODE_RETURN,SDL_SCANCODE_Q,SDL_SCANCODE_E,SDL_SCANCODE_W,SDL_SCANCODE_S,SDL_SCANCODE_A,SDL_SCANCODE_D,SDL_SCANCODE_UP,SDL_SCANCODE_DOWN,SDL_SCANCODE_LEFT,SDL_SCANCODE_RIGHT,SDL_SCANCODE_I,SDL_SCANCODE_K,SDL_SCANCODE_J,SDL_SCANCODE_L};
     memcpy(c->keys,keys,sizeof(keys));
 }
@@ -88,7 +88,7 @@ bool launcher_config_load(const char* p,LauncherConfig* c,char* error,size_t cap
     if(o.count("vsync")){if(!o["vsync"].is<bool>())return fail(error,cap,"Invalid VSync setting.");v.vsync=o["vsync"].get<bool>();}
     if(o.count("window_mode")){auto& m=o["window_mode"];if(!m.is<double>()||m.get<double>()<0||m.get<double>()>2||floor(m.get<double>())!=m.get<double>())return fail(error,cap,"Invalid window mode.");v.window_mode=int(m.get<double>());}
     if(o.count("window_resolution")){auto& r=o["window_resolution"];if(!r.is<double>()||r.get<double>()<0||r.get<double>()>6||floor(r.get<double>())!=r.get<double>())return fail(error,cap,"Invalid window resolution.");v.window_resolution=int(r.get<double>());}
-    if(o.count("internal_resolution")){auto& r=o["internal_resolution"];if(!r.is<double>()||r.get<double>()<0||r.get<double>()>4||floor(r.get<double>())!=r.get<double>())return fail(error,cap,"Invalid internal resolution.");v.internal_resolution=int(r.get<double>());}
+    if(o.count("internal_resolution")){auto& r=o["internal_resolution"];if(!r.is<double>()||r.get<double>()<0||r.get<double>()>5||floor(r.get<double>())!=r.get<double>())return fail(error,cap,"Invalid internal resolution.");v.internal_resolution=int(r.get<double>());}
     if(o.count("aspect_ratio")){auto& a=o["aspect_ratio"];if(!a.is<double>()||a.get<double>()<0||a.get<double>()>1||floor(a.get<double>())!=a.get<double>())return fail(error,cap,"Invalid aspect ratio.");v.aspect_ratio=int(a.get<double>());}
     if(o.count("unlock_all")){if(!o["unlock_all"].is<bool>())return fail(error,cap,"Invalid unlock_all setting.");v.unlock_all=o["unlock_all"].get<bool>();}
     if(o.count("language")&&o["language"].is<std::string>()){auto lang=o["language"].get<std::string>();if(lang.size()<sizeof(v.language))strcpy_s(v.language,lang.c_str());}

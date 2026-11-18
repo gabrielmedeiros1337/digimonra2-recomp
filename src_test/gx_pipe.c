@@ -71,7 +71,7 @@ static XFBImage s_xfb_images[8];
 static bool s_xfb_vram;
 static u64 s_xfb_gpu_copies,s_xfb_resolves;
 void gx_pipe_set_internal_scale(float scale) {
-    if(scale<1.0f)scale=1.0f;if(scale>4.0f)scale=4.0f;
+    if(scale<1.0f)scale=1.0f;if(scale>6.0f)scale=6.0f;
     s_internal_scale=scale;gx_gl_set_internal_scale(scale);
     if(s_efb){
         int w=0,h=0;SDL_QueryTexture(s_efb,NULL,NULL,&w,&h);
@@ -1326,10 +1326,25 @@ static u64 raw_hash(const void* data,size_t bytes){
 #endif
 }
 static bool raw_signature_append(const void* data,u32 bytes){
-    if(bytes>1024u*1024u-s_raw_signature_bytes)return false;
+    const u32 limit=1024u*1024u;
+    if(bytes>limit-s_raw_signature_bytes)return false;
     u32 needed=s_raw_signature_bytes+bytes;
-    if(needed>s_raw_signature_capacity){u8* p=realloc(s_raw_signature,needed);if(!p)return false;s_raw_signature=p;s_raw_signature_capacity=needed;}
-    memcpy(s_raw_signature+s_raw_signature_bytes,data,bytes);s_raw_signature_bytes=needed;return true;
+    if(needed>s_raw_signature_capacity){
+        u32 capacity=s_raw_signature_capacity*2u;
+        if(capacity>limit)capacity=limit;
+        if(capacity<needed)capacity=needed;
+        u8* buffer=realloc(s_raw_signature,capacity);
+        if(!buffer && capacity>needed){
+            capacity=needed;
+            buffer=realloc(s_raw_signature,capacity);
+        }
+        if(!buffer)return false;
+        s_raw_signature=buffer;
+        s_raw_signature_capacity=capacity;
+    }
+    memcpy(s_raw_signature+s_raw_signature_bytes,data,bytes);
+    s_raw_signature_bytes=needed;
+    return true;
 }
 static bool raw_signature(CPUState* cpu,const VertexLayout* layout,u32 cursor,u32 count,const VertexInput* input){
     s_raw_signature_bytes=0;

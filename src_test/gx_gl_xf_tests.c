@@ -1,5 +1,6 @@
 #define SDL_MAIN_HANDLED
 #include "gx_gl.h"
+#include <SDL_opengl.h>
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
@@ -75,6 +76,43 @@ int main(void) {
     for(u32 i=0;i<3;i++)CHECK(gx_gl_draw_raw(renderer,&material,images,stable,&xf,3,0x90));
     gx_gl_get_stats(&after);CHECK(after.geometry_hits>before.geometry_hits && after.geometry_uploads>before.geometry_uploads);
     SDL_Rect center={320,264,1,1};u8 center_pixel[4];CHECK(SDL_RenderReadPixels(renderer,&center,SDL_PIXELFORMAT_RGBA32,center_pixel,4)==0 && center_pixel[0]==123);
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glEnable(GL_FOG);glEnable(GL_STENCIL_TEST);glEnable(GL_SCISSOR_TEST);
+    glScissor(2,3,7,11);glViewport(5,6,123,124);
+    glDepthRange(0.25,0.75);glDepthFunc(GL_GEQUAL);glDepthMask(GL_FALSE);
+    glColor4f(0.125f,0.25f,0.5f,0.75f);
+    CHECK(gx_gl_draw_raw(renderer,&material,images,stable,&xf,3,0x90));
+    CHECK(glIsEnabled(GL_FOG) && glIsEnabled(GL_STENCIL_TEST) && glIsEnabled(GL_SCISSOR_TEST));
+    GLint rect[4],depth_func;GLdouble depth_range[2];GLboolean depth_mask;GLfloat color[4];
+    glGetIntegerv(GL_SCISSOR_BOX,rect);
+    CHECK(rect[0]==2 && rect[1]==3 && rect[2]==7 && rect[3]==11);
+    glGetIntegerv(GL_VIEWPORT,rect);
+    CHECK(rect[0]==5 && rect[1]==6 && rect[2]==123 && rect[3]==124);
+    glGetDoublev(GL_DEPTH_RANGE,depth_range);glGetIntegerv(GL_DEPTH_FUNC,&depth_func);
+    glGetBooleanv(GL_DEPTH_WRITEMASK,&depth_mask);glGetFloatv(GL_CURRENT_COLOR,color);
+    CHECK(depth_range[0]==0.25 && depth_range[1]==0.75 && depth_func==GL_GEQUAL && !depth_mask);
+    CHECK(color[0]==0.125f && color[1]==0.25f && color[2]==0.5f && color[3]==0.75f);
+    glPopAttrib();
+
+    // Forward the selected TEV constant directly into color and alpha.
+    GXGLMaterial constant={0};constant.tev_valid=true;
+    constant.bp[0xC0]=14;constant.bp[0xC1]=6u<<4;
+    for(u32 reg=0;reg<4;reg++){
+        constant.konst[reg*2]=(16u+reg)|((112u+reg)<<12);
+        constant.konst[reg*2+1]=(80u+reg)|((48u+reg)<<12);
+    }
+    for(u32 selector=0;selector<32;selector++){
+        constant.bp[0xF6]=(selector<<4)|(selector<<9);
+        CHECK(gx_gl_draw_raw(renderer,&constant,images,stable,&xf,3,0x90));
+        CHECK(SDL_RenderReadPixels(renderer,&center,SDL_PIXELFORMAT_RGBA32,center_pixel,4)==0);
+        for(u32 channel=0;channel<4;channel++){
+            u32 expected=0;
+            if(selector<8)expected=selector==0 ? 255u : 256u-32u*selector;
+            else if(selector>=16)expected=16u+32u*((selector-16u)/4u)+(selector&3u);
+            else if(selector>=12 && channel<3)expected=16u+32u*channel+(selector-12u);
+            CHECK(center_pixel[channel]==expected);
+        }
+    }
     xf_float(&xf,3,4);SDL_SetRenderDrawColor(renderer,0,0,0,0);CHECK(SDL_RenderClear(renderer)==0);
     CHECK(gx_gl_draw_raw(renderer,&material,images,stable,&xf,3,0x90));CHECK(SDL_RenderReadPixels(renderer,&center,SDL_PIXELFORMAT_RGBA32,center_pixel,4)==0 && center_pixel[0]==0);
     xf_float(&xf,3,0);for(u32 i=0;i<3;i++)stable[i].position[0]+=4;
